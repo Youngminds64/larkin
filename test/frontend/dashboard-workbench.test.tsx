@@ -79,6 +79,18 @@ const config = (agentId?: string) => ({
   })),
 });
 
+function missingRules() {
+  return { files: [
+    { name: "AGENTS.md", linkedTo: null, file: null, error: null },
+    { name: "CLAUDE.md", linkedTo: null, file: null, error: null },
+  ] };
+}
+
+function ruleFile(name: string, content: string) {
+  return { kind: "file", path: name, name, size: content.length, modifiedAt: "2026-10-24T10:00:00.000Z",
+    binary: false, truncated: false, content, sha256: "c".repeat(64) };
+}
+
 function ok(value: unknown) {
   return Promise.resolve({ ok: true, status: 200, json: async () => value });
 }
@@ -97,6 +109,7 @@ beforeEach(() => {
     if (url.pathname === "/api/status") return ok(status);
     if (url.pathname === "/api/config") return ok(config(url.searchParams.get("agent") || undefined));
     if (url.pathname === "/api/workspace") return ok({ kind: "directory", path: "", parent: null, entries: [] });
+    if (url.pathname === "/api/agent-rules") return ok(missingRules());
     throw new Error(`unexpected request ${url}`);
   }));
 });
@@ -695,6 +708,69 @@ describe("Agent-centric dashboard workbench", () => {
     expect(writes[1]).toMatchObject({ content: "new rules!", expectedSha256: "b".repeat(64) });
     expect(screen.getByLabelText("编辑 AGENTS.md")).toHaveValue("new rules!");
     expect(screen.getByRole("button", { name: "载入最新版本" })).toBeVisible();
+  });
+
+  it("creates AGENTS.md from a template in 人设与能力 and adds a CLAUDE.md that imports it", async () => {
+    let rules = missingRules();
+    const creates: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/status") return ok(status);
+      if (url.pathname === "/api/config") return ok(config(url.searchParams.get("agent") || undefined));
+      if (url.pathname === "/api/models/codex") return ok({ models: [{ id: "default", label: "default" }] });
+      if (url.pathname === "/api/workspace") return ok({ kind: "directory", path: "", parent: null, entries: [] });
+      if (url.pathname === "/api/agent-rules/file" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        creates.push(body);
+        rules = { files: rules.files.map((view) => view.name === body.name ? { ...view, file: ruleFile(body.name, body.content) } : view) } as typeof rules;
+        return ok(ruleFile(body.name, body.content));
+      }
+      if (url.pathname === "/api/agent-rules") return ok(rules);
+      throw new Error(`unexpected request ${url}`);
+    }));
+    render(<App />);
+    await screen.findByRole("heading", { level: 1, name: "Builder" });
+    await userEvent.click(screen.getByRole("tab", { name: "人设与能力" }));
+    await userEvent.click(await screen.findByRole("button", { name: "用模板新建" }));
+    await waitFor(() => expect(creates.map((body) => body.name)).toEqual(["AGENTS.md", "CLAUDE.md"]));
+    expect(creates[0]).toMatchObject({ agentId: "cli_AgentB2", content: expect.stringContaining("# 角色") });
+    expect(creates[1]).toEqual({ agentId: "cli_AgentB2", name: "CLAUDE.md", content: "@AGENTS.md\n" });
+    await userEvent.click(await screen.findByRole("button", { name: "编辑" }));
+    expect(screen.getByLabelText("编辑 AGENTS.md")).toHaveValue(creates[0].content);
+  });
+
+  it("tells a Claude-runtime Agent when CLAUDE.md does not use AGENTS.md", async () => {
+    const prior = agents[1].runtime;
+    agents[1].runtime = "claude";
+    let rules = { files: [
+      { name: "AGENTS.md", linkedTo: null, file: ruleFile("AGENTS.md", "# 角色\n"), error: null },
+      { name: "CLAUDE.md", linkedTo: null, file: null, error: null },
+    ] } as ReturnType<typeof missingRules>;
+    const creates: Array<Record<string, unknown>> = [];
+    try {
+      vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), "http://localhost");
+        if (url.pathname === "/api/status") return ok(status);
+        if (url.pathname === "/api/config") return ok(config(url.searchParams.get("agent") || undefined));
+        if (url.pathname.startsWith("/api/models/")) return ok({ models: [{ id: "default", label: "default" }] });
+        if (url.pathname === "/api/workspace") return ok({ kind: "directory", path: "", parent: null, entries: [] });
+        if (url.pathname === "/api/agent-rules/file" && init?.method === "POST") {
+          const body = JSON.parse(String(init.body));
+          creates.push(body);
+          rules = { files: rules.files.map((view) => view.name === body.name ? { ...view, file: ruleFile(body.name, body.content) } : view) } as typeof rules;
+          return ok(ruleFile(body.name, body.content));
+        }
+        if (url.pathname === "/api/agent-rules") return ok(rules);
+        throw new Error(`unexpected request ${url}`);
+      }));
+      render(<App />);
+      await screen.findByRole("heading", { level: 1, name: "Builder" });
+      await userEvent.click(screen.getByRole("tab", { name: "人设与能力" }));
+      expect(await screen.findByText(/还没有 CLAUDE\.md，这份设定不会被读取/)).toBeVisible();
+      await userEvent.click(screen.getByRole("button", { name: "新建 CLAUDE.md 并引用 AGENTS.md" }));
+      await waitFor(() => expect(creates).toEqual([{ agentId: "cli_AgentB2", name: "CLAUDE.md", content: "@AGENTS.md\n" }]));
+      await waitFor(() => expect(screen.queryByText(/这份设定不会被读取/)).not.toBeInTheDocument());
+    } finally { agents[1].runtime = prior; }
   });
 
   it("does not render Provider Credentials and keeps only three runtime options", async () => {
