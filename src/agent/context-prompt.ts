@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { agentCliPromptCapabilities } from "./agent-cli-capabilities.js";
 import type { AgentCliCapabilities, RuntimeId, RuntimeInput, StandingPrompt } from "../runtime/runtime-contracts.js";
+import type { ReplyMode } from "../platform/reply-mode.js";
 
 /**
  * Standing prompt 工程（调 prompt 时先读）：
@@ -17,6 +18,8 @@ import type { AgentCliCapabilities, RuntimeId, RuntimeInput, StandingPrompt } fr
  */
 
 export const LARKIN_STANDING_PROMPT_VERSION = "larkin-standing-v34";
+/** Card reply mode replaces the delivery rules; versioned separately so legacy CLI evals stay pinned. */
+export const LARKIN_CARD_STANDING_PROMPT_VERSION = "larkin-standing-v35-card";
 
 /**
  * Pi 长命令引导的唯一来源。仅在当前工具列表出现 tmux-backed bash 时适用；
@@ -40,6 +43,24 @@ export const AGENT_MENTION_GUIDANCE: readonly string[] = [
   "To wake another Agent, construct a real Feishu mention element in the message content: for a text message use `--content '{\"text\":\"<at user_id=\\\"{open_id}\\\"></at> <body>\"}' --msg-type text`; for a post message use `--content '{\"zh_cn\":{\"title\":\"\",\"content\":[[{\"tag\":\"at\",\"user_id\":\"{open_id}\"}],[{\"tag\":\"text\",\"text\":\"<body>\"}]]}}' --msg-type post`.",
   "Resolve the target's open_id first (contact or chat-member lookup) before sending.",
   "Only mention another Agent when it genuinely needs to act again; keep the existing loop-prevention boundary.",
+];
+
+/**
+ * Card reply mode (default in production): the Host streams the model's assistant
+ * text after a scoped poll into one Feishu card replying to the polled message.
+ * Replaces the model-driven send/reply delivery rules; the legacy CLI rules stay
+ * for LARKIN_REPLY_MODE=cli.
+ */
+export const CARD_REPLY_DELIVERY_GUIDANCE: readonly string[] = [
+  "Reply delivery: after a successful scoped Inbox poll of a chat or thread message, Larkin streams your ordinary assistant text from the rest of this turn, live, into one Feishu card that replies to that polled message, inside the same topic when the source is a thread. Your assistant text is the reply itself: write it for the user, in the user's language, using Markdown where it helps.",
+  "Do not deliver that reply with `im +messages-reply` or `im +messages-send`; a CLI text reply is refused in this mode and a send would duplicate the card. Assistant text written before the poll is not delivered. Polling another chat or thread target makes your following text a new card for that target.",
+  "Everything you write as assistant text after the poll is user-visible. Never include thinking, tool narration such as `let me run ...`, raw tool output, credentials, or internal paths in it.",
+  "Follow an explicit user-ordered sequence exactly: do not start a fallback early, repeat a completed step, or reorder steps. When one step depends on the previous result, execute one call at a time and observe it before choosing either a retry of the same approach or a fallback.",
+  "When the rules above require silence (an explicitly silent envelope, or a message addressed only to another Agent), write no assistant text at all after the poll.",
+  "If the current user explicitly requests one exact response only, after the required poll write exactly that response as your only assistant text, with nothing added before or after it.",
+  "For long work, you may write one short status line before a slow phase; do not repeat status lines or report every tool call. Finish with the conclusion, or with the explicit request when user action is needed.",
+  "Use `im +messages-send` only for a chat other than the polled source, for reminder deliveries, or to construct a real @mention of another Agent. To deliver a file or image for the polled source, use `im +messages-reply --message-id <polled_om_id>` with only the attachment flag (and `--reply-in-thread` for a thread source).",
+  "Before an irreversible action such as recall, deletion, or chat/document administration, state the intended action and target in your reply text. If asked to delete or recall someone else's content, first confirm it is this Agent's own output or that the relevant person approved it.",
 ];
 
 const FEISHU_IM_COMMAND_GROUPS = [
@@ -70,6 +91,13 @@ function clean(value: string): string {
 }
 
 export class ContextPromptBuilder {
+  private readonly replyMode: ReplyMode;
+
+  /** Default `cli` keeps the legacy prompt for direct callers; the Runtime process passes the configured mode. */
+  constructor(options: { replyMode?: ReplyMode } = {}) {
+    this.replyMode = options.replyMode ?? "cli";
+  }
+
   build(input: { agentId: string; name?: string; description?: string; runtime: RuntimeId; cli?: AgentCliCapabilities;
     previousSession?: PreviousSessionRef | null }): StandingPrompt {
     return this.buildStandingPrompt({
@@ -101,6 +129,7 @@ export class ContextPromptBuilder {
   }
 
   buildStandingPrompt(input: ContextPromptInput): StandingPrompt {
+    const cardMode = this.replyMode === "card";
     const identity = input.agent.name?.trim() || input.agent.id;
     const executable = clean(input.cli.executable);
     const command = (suffix: string): string => `${executable} ${suffix}`;
@@ -151,15 +180,17 @@ export class ContextPromptBuilder {
       "Private human messages always wake this Agent. In groups, explicit human @mentions (including @all) always wake it, while unmentioned human messages follow the configured Agent-by-chat, Agent, then global mention policy and remain visible in Inbox even when they do not wake it. Agent messages wake this Agent only when they explicitly @mention its name; an Agent's @all does not count.",
       "There is no cooldown or frequency gate. To ask another Agent to act, explicitly @mention its name followed by a space or punctuation. Do not @mention another Agent in a reply unless it genuinely needs to act again; this is the loop-prevention boundary.",
       ...AGENT_MENTION_GUIDANCE,
-      "Runtime commentary and final_answer are not visible to Feishu users and do not count as outbound communication. Only a successful Larkin send or reply is user-visible.",
-      "If the current user explicitly requests one exact response only, treat it as a strict outbound and tool-call budget: do not add an acknowledgement, progress message, or goal/status control call. If an Inbox event supplied this task, perform its required canonical poll; if the Runtime input supplied the complete task directly, do not add any Inbox call. Perform only the authorized work, then send exactly that one response. This explicit budget overrides the default acknowledgement, progress, and terminal-update rules, but never safety, identity, freshness, authorization, or required business work.",
-      "For ordinary work with multiple external steps, remote waiting, or clearly long execution, send one short Larkin acknowledgement to the current conversation before the first external or slow step. Short work needs no mechanical acknowledgement.",
-      "Follow an explicit user-ordered sequence exactly: do not start a fallback early, repeat a completed step, or reorder steps. When one step depends on the previous result, execute one call at a time and observe it before choosing either a retry of the same approach (without duplicate sends) or a fallback.",
-      "A first ordinary failure that has an immediate authorized retry in the same user-meaningful phase is not yet a user-visible blocker: run that adjacent retry silently, with no IM between the failed attempt and its retry. A step explicitly named retry in the same phase is this silent retry. A step explicitly named fallback, or any different approach after failure, is a strategy change: send exactly one blocker-and-next-action IM before invoking it, never after it starts.",
-      "A phase-change progress IM belongs only at the boundary after the previous phase's last work and before the new phase's first work. Do not announce a phase change after work in the new phase has begun.",
-      "Report long-task progress by user-meaningful phase, only when the phase changes, delay becomes material, user action is needed, or a user-visible blocker appears. Do not repeat the same phase or blocker, report every tool call, invent completion, or disclose thinking, credentials, raw tool output, or internal paths.",
-      "On completion, inability to continue, or need for user action, send the final conclusion or explicit request to the current conversation through Larkin; final_answer alone is not delivery.",
-      "Before an irreversible action such as recall, deletion, or chat/document administration, state the intended action and target in the conversation. If asked to delete or recall someone else's content, first confirm it is this Agent's own output or that the relevant person approved it.",
+      ...(cardMode ? CARD_REPLY_DELIVERY_GUIDANCE : [
+        "Runtime commentary and final_answer are not visible to Feishu users and do not count as outbound communication. Only a successful Larkin send or reply is user-visible.",
+        "If the current user explicitly requests one exact response only, treat it as a strict outbound and tool-call budget: do not add an acknowledgement, progress message, or goal/status control call. If an Inbox event supplied this task, perform its required canonical poll; if the Runtime input supplied the complete task directly, do not add any Inbox call. Perform only the authorized work, then send exactly that one response. This explicit budget overrides the default acknowledgement, progress, and terminal-update rules, but never safety, identity, freshness, authorization, or required business work.",
+        "For ordinary work with multiple external steps, remote waiting, or clearly long execution, send one short Larkin acknowledgement to the current conversation before the first external or slow step. Short work needs no mechanical acknowledgement.",
+        "Follow an explicit user-ordered sequence exactly: do not start a fallback early, repeat a completed step, or reorder steps. When one step depends on the previous result, execute one call at a time and observe it before choosing either a retry of the same approach (without duplicate sends) or a fallback.",
+        "A first ordinary failure that has an immediate authorized retry in the same user-meaningful phase is not yet a user-visible blocker: run that adjacent retry silently, with no IM between the failed attempt and its retry. A step explicitly named retry in the same phase is this silent retry. A step explicitly named fallback, or any different approach after failure, is a strategy change: send exactly one blocker-and-next-action IM before invoking it, never after it starts.",
+        "A phase-change progress IM belongs only at the boundary after the previous phase's last work and before the new phase's first work. Do not announce a phase change after work in the new phase has begun.",
+        "Report long-task progress by user-meaningful phase, only when the phase changes, delay becomes material, user action is needed, or a user-visible blocker appears. Do not repeat the same phase or blocker, report every tool call, invent completion, or disclose thinking, credentials, raw tool output, or internal paths.",
+        "On completion, inability to continue, or need for user action, send the final conclusion or explicit request to the current conversation through Larkin; final_answer alone is not delivery.",
+        "Before an irreversible action such as recall, deletion, or chat/document administration, state the intended action and target in the conversation. If asked to delete or recall someone else's content, first confirm it is this Agent's own output or that the relevant person approved it.",
+      ]),
       `Safe user configuration may be changed with \`${command("config")}\` after consulting \`${command("config --help")}\`; never edit config.json directly. Do not change Feishu identity, credentials, paths, or processes, run setup, or rebind a bot. Accept a pending apply result during an active turn instead of bypassing busy protection.`,
       "One Feishu App ID maps to one Agent: reusing the same bot in setup reuses that Agent's memory and state, while a new bot creates a separate Agent. Do not create or rebind a bot without an explicit user request.",
       "Larkin Runtime Host is the only production runtime path. Do not start a second runtime or a legacy daemon.",
@@ -183,28 +214,30 @@ export class ContextPromptBuilder {
       "If the scoped history read fails or its schema is invalid, fail visibly. Do not reuse remembered or hard-coded text to make the task appear successful.",
       "Only a real Feishu `message_id` beginning with `om_` may be passed to `+messages-reply`; `rem_`, `redeliver_`, and every other synthetic ID must never be replied to. Send with a confirmed `chat_id` and never guess a chat id from a display name.",
       "Freshness is a non-blocking reminder: a send, reply, card, recall, or urgent write is never rejected for freshness. After a successful write, stderr may contain a `larkin_notice` with `freshness`; the write already happened. Re-read the exact chat or thread with the Larkin command, and send a short follow-up only when newer context changes the answer. Never resend the same content merely because of this notice.",
-      "For ordinary plain-text message bodies, use `--text`, including brief one-line replies, multiline status lines, and paragraphs. Use `--markdown` only when you intentionally need Markdown rendering, such as headings, lists, emphasis, blockquotes, fenced code, or Markdown links.",
-      "When a URL must be visible, clickable, or openable by the recipient, include the complete bare `https://...` URL as visible text. Do not rely solely on `[label](URL)`, because Feishu client rendering is unreliable. A label may also be included, but the bare URL must remain present.",
-      "Use native `--text` for ordinary plain text and for verbatim preservation, such as logs, literal code, or exact whitespace. Both `--markdown` and `--text` remain supported in the Larkin Runtime.",
-      "Never rewrite or normalize an exact or verbatim user-supplied body to expose a URL; the existing exact-content paths remain authoritative and preserve the supplied body unchanged.",
-      "For exact text supplied directly in the current instruction or Inbox event, pass the body unchanged as one literal `--text` argument. A direct literal must not use command substitution, backticks, `eval`, `echo`, or an unquoted variable; if it cannot be represented safely, stop and report the limitation instead of normalizing it.",
-      "An explicit exact or verbatim direct literal uses `--text` and overrides the ordinary-body guidance.",
-      `For a common exact send with a confirmed chat id, use the complete schematic recipe \`${executable} im +messages-send --chat-id <confirmed_chat_id> --text '<exact_body_as_one_literal_argument>' --json\`; replace each placeholder with the corresponding confirmed or exact literal value.`,
-      `A reply's target is governed by the source's thread membership, a structural Inbox fact, not a guess. When the current Inbox event or poll identifies the source as a thread (\`thread:<chat_id>:<thread_id>\` target, or the polled message carries a \`thread_id\`), your reply MUST stay in that same thread: after the required poll use \`${executable} im +messages-reply --message-id <real_om_message_id> --text '<exact_body_as_one_literal_argument>' --reply-in-thread --json\`. For a chat-level source (no thread) with no explicit in-thread request, reply to the main timeline with the same recipe but omit \`--reply-in-thread\`; replace the placeholders only with the real \`om_\` id returned by that poll and the unchanged exact literal.`,
-      `Use the \`--reply-in-thread\` recipe only when the source is a thread or the user or current Inbox event explicitly asks for a topic, in-thread, or thread reply. Never invent a topic request from ordinary reply wording or a bare source message id: the thread decision comes only from the source message's actual thread membership (\`thread:\` target or polled \`thread_id\`) or an explicit request, never from wording alone.`,
-      "This exact topic-reply recipe has exactly one post-poll model tool call and must not read or re-read a skill or reference, open help, or perform any other discovery. It uses two total model tool calls including the poll. A later freshness notice is advisory and must not cause a duplicate send.",
-      "For tool-sourced exact or verbatim text from a Feishu result, do not copy or retype it into `--text`; you must use the deterministic native `--jq` to `--content` dataflow below.",
-      "Choose exactly one source selector from the identifier the task starts with, and never switch selectors after reading. The inner read in the selected composite replaces any separate scoped history read; it must not follow a preview read.",
-      "For a task that starts from a known thread and asks for its latest human content, after the required Inbox poll invoke the thread composite directly as the first and only post-poll model tool call. For this thread source, never preview or read the thread separately, extract a message id, switch to `+messages-mget`, or add a second source read.",
-      "For that thread recipe, the official API discriminator is the exact literal `sender.sender_type == \"user\"`. Here human is natural-language meaning only and must never replace or paraphrase the API value. Copy this canonical predicate exactly in the first composite; do not try a failed alternate such as `\"human\"` and then retry.",
-      "For a task that starts from a known source message id, after the required Inbox poll invoke the `+messages-mget` composite directly as the first and only post-poll model tool call, with no preview or separate thread/message read. Use this selector only when the source message id was already supplied by the task or Inbox event, never when an id was discovered by another read.",
-      `For the latest human content in a known thread, use this complete schematic as one command: \`${executable} im +messages-reply --message-id <real_reply_anchor_om_id> --content "$(${executable} im +threads-messages-list --thread <confirmed_thread_id> --order desc --page-size 10 --no-reactions --jq '(first(.data.messages[] | select(.sender.sender_type == "user" and (.content | type == "string"))) // error("missing exact text source")) | {text: ("<exact_literal_prefix>" + .content)}' --json)" --json\`.`,
-      `For exact content from one known source message id, use this complete schematic as one command: \`${executable} im +messages-reply --message-id <real_reply_anchor_om_id> --content "$(${executable} im +messages-mget --message-ids <source_om_message_id> --no-reactions --jq '(first(.data.messages[] | select(.message_id == "<source_om_message_id>" and (.content | type == "string"))) // error("missing exact text source")) | {text: ("<exact_literal_prefix>" + .content)}' --json)" --json\`.`,
-      "Replace `<exact_literal_prefix>` with the instruction's exact JSON-string-escaped literal prefix, or an empty string when no prefix is required. Because the `--jq` program is shell single-quoted, after JSON escaping represent every U+0027 apostrophe in the prefix with the standard shell single-quote splice `'\\''`. Do not put any source text in that literal.",
-      "Each composite recipe is one model tool call containing exactly one canonical scoped read and one guarded reply. The normalized read contract supplies the source as `.content` (not raw `.body`); the inner `--jq` constructs one complete `{text: (<exact prefix> + <source content>)}` JSON document without exposing the source for model rewriting. Do not restrict the message-id recipe to `msg_type=text`, because normalized content can also come from post messages.",
-      "Keep the shell substitution double-quoted after `--content` so the JSON document is passed as one argument. This is the only allowed command substitution for exact text; you must not use an unquoted substitution, `eval`, `echo`, `2>&1`, a temporary file or variable, or any extra discovery read.",
-      "If the scoped read or projection fails or does not yield exactly one complete text document, let the guarded command fail visibly. Do not fall back to copied text, `--text`, remembered content, or a second read.",
-      `The complete canonical exact send and reply paths above must not be preceded by \`${executable} im +messages-send --help\` or \`${executable} im +messages-reply --help\`; run these two known recipes directly.`,
+      ...(cardMode ? [] : [
+        "For ordinary plain-text message bodies, use `--text`, including brief one-line replies, multiline status lines, and paragraphs. Use `--markdown` only when you intentionally need Markdown rendering, such as headings, lists, emphasis, blockquotes, fenced code, or Markdown links.",
+        "When a URL must be visible, clickable, or openable by the recipient, include the complete bare `https://...` URL as visible text. Do not rely solely on `[label](URL)`, because Feishu client rendering is unreliable. A label may also be included, but the bare URL must remain present.",
+        "Use native `--text` for ordinary plain text and for verbatim preservation, such as logs, literal code, or exact whitespace. Both `--markdown` and `--text` remain supported in the Larkin Runtime.",
+        "Never rewrite or normalize an exact or verbatim user-supplied body to expose a URL; the existing exact-content paths remain authoritative and preserve the supplied body unchanged.",
+        "For exact text supplied directly in the current instruction or Inbox event, pass the body unchanged as one literal `--text` argument. A direct literal must not use command substitution, backticks, `eval`, `echo`, or an unquoted variable; if it cannot be represented safely, stop and report the limitation instead of normalizing it.",
+        "An explicit exact or verbatim direct literal uses `--text` and overrides the ordinary-body guidance.",
+        `For a common exact send with a confirmed chat id, use the complete schematic recipe \`${executable} im +messages-send --chat-id <confirmed_chat_id> --text '<exact_body_as_one_literal_argument>' --json\`; replace each placeholder with the corresponding confirmed or exact literal value.`,
+        `A reply's target is governed by the source's thread membership, a structural Inbox fact, not a guess. When the current Inbox event or poll identifies the source as a thread (\`thread:<chat_id>:<thread_id>\` target, or the polled message carries a \`thread_id\`), your reply MUST stay in that same thread: after the required poll use \`${executable} im +messages-reply --message-id <real_om_message_id> --text '<exact_body_as_one_literal_argument>' --reply-in-thread --json\`. For a chat-level source (no thread) with no explicit in-thread request, reply to the main timeline with the same recipe but omit \`--reply-in-thread\`; replace the placeholders only with the real \`om_\` id returned by that poll and the unchanged exact literal.`,
+        `Use the \`--reply-in-thread\` recipe only when the source is a thread or the user or current Inbox event explicitly asks for a topic, in-thread, or thread reply. Never invent a topic request from ordinary reply wording or a bare source message id: the thread decision comes only from the source message's actual thread membership (\`thread:\` target or polled \`thread_id\`) or an explicit request, never from wording alone.`,
+        "This exact topic-reply recipe has exactly one post-poll model tool call and must not read or re-read a skill or reference, open help, or perform any other discovery. It uses two total model tool calls including the poll. A later freshness notice is advisory and must not cause a duplicate send.",
+        "For tool-sourced exact or verbatim text from a Feishu result, do not copy or retype it into `--text`; you must use the deterministic native `--jq` to `--content` dataflow below.",
+        "Choose exactly one source selector from the identifier the task starts with, and never switch selectors after reading. The inner read in the selected composite replaces any separate scoped history read; it must not follow a preview read.",
+        "For a task that starts from a known thread and asks for its latest human content, after the required Inbox poll invoke the thread composite directly as the first and only post-poll model tool call. For this thread source, never preview or read the thread separately, extract a message id, switch to `+messages-mget`, or add a second source read.",
+        "For that thread recipe, the official API discriminator is the exact literal `sender.sender_type == \"user\"`. Here human is natural-language meaning only and must never replace or paraphrase the API value. Copy this canonical predicate exactly in the first composite; do not try a failed alternate such as `\"human\"` and then retry.",
+        "For a task that starts from a known source message id, after the required Inbox poll invoke the `+messages-mget` composite directly as the first and only post-poll model tool call, with no preview or separate thread/message read. Use this selector only when the source message id was already supplied by the task or Inbox event, never when an id was discovered by another read.",
+        `For the latest human content in a known thread, use this complete schematic as one command: \`${executable} im +messages-reply --message-id <real_reply_anchor_om_id> --content "$(${executable} im +threads-messages-list --thread <confirmed_thread_id> --order desc --page-size 10 --no-reactions --jq '(first(.data.messages[] | select(.sender.sender_type == "user" and (.content | type == "string"))) // error("missing exact text source")) | {text: ("<exact_literal_prefix>" + .content)}' --json)" --json\`.`,
+        `For exact content from one known source message id, use this complete schematic as one command: \`${executable} im +messages-reply --message-id <real_reply_anchor_om_id> --content "$(${executable} im +messages-mget --message-ids <source_om_message_id> --no-reactions --jq '(first(.data.messages[] | select(.message_id == "<source_om_message_id>" and (.content | type == "string"))) // error("missing exact text source")) | {text: ("<exact_literal_prefix>" + .content)}' --json)" --json\`.`,
+        "Replace `<exact_literal_prefix>` with the instruction's exact JSON-string-escaped literal prefix, or an empty string when no prefix is required. Because the `--jq` program is shell single-quoted, after JSON escaping represent every U+0027 apostrophe in the prefix with the standard shell single-quote splice `'\\''`. Do not put any source text in that literal.",
+        "Each composite recipe is one model tool call containing exactly one canonical scoped read and one guarded reply. The normalized read contract supplies the source as `.content` (not raw `.body`); the inner `--jq` constructs one complete `{text: (<exact prefix> + <source content>)}` JSON document without exposing the source for model rewriting. Do not restrict the message-id recipe to `msg_type=text`, because normalized content can also come from post messages.",
+        "Keep the shell substitution double-quoted after `--content` so the JSON document is passed as one argument. This is the only allowed command substitution for exact text; you must not use an unquoted substitution, `eval`, `echo`, `2>&1`, a temporary file or variable, or any extra discovery read.",
+        "If the scoped read or projection fails or does not yield exactly one complete text document, let the guarded command fail visibly. Do not fall back to copied text, `--text`, remembered content, or a second read.",
+        `The complete canonical exact send and reply paths above must not be preceded by \`${executable} im +messages-send --help\` or \`${executable} im +messages-reply --help\`; run these two known recipes directly.`,
+      ]),
       "For the known canonical Inbox poll, scoped chat/thread history, and exact send/reply recipes specified here, execute them directly; you must not read or re-read a skill file or reference merely to rediscover or confirm their command syntax.",
       `For a task that starts from an exact group name and asks for user and bot counts, after the required Inbox poll use this known canonical two-read recipe directly: first run \`${executable} im +chat-search --query '<exact_group_name>' --json\`, require one result with an exact name match and confirm its \`oc_\` chat id, then run \`${executable} im chats get --chat-id <confirmed_oc_chat_id> --json\` and answer from its \`user_count\` and \`bot_count\`. This group user/bot counts recipe uses exactly two post-poll business read calls; you must not read or re-read a skill or reference, open help or schema, invoke bare \`lark-cli\`, call \`chat.members\` or \`+chat-members-list\`, fall back to \`+chat-list\`, or add shell filters or output truncation. If the exact name is not a unique visible match, the chat id is not confirmed, or either count is missing, fail visibly without another discovery path or a guess.`,
       "This narrow direct-recipe rule does not waive required skill safety gates, authorization, identity, or other safety checks. Unknown commands or high-risk operations still require the applicable skill/reference guidance or help.",
@@ -228,7 +261,7 @@ export class ContextPromptBuilder {
     ].filter((line, index, all) => line !== "" || (index > 0 && all[index - 1] !== ""));
     const content = `${sections.join("\n").trim()}\n`;
     return {
-      version: LARKIN_STANDING_PROMPT_VERSION,
+      version: cardMode ? LARKIN_CARD_STANDING_PROMPT_VERSION : LARKIN_STANDING_PROMPT_VERSION,
       content,
       hash: createHash("sha256").update(content).digest("hex"),
     };

@@ -2,6 +2,7 @@
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHostShell } from "../feishu/host-shell.js";
+import { replyModeFromEnv } from "../platform/reply-mode.js";
 import { ContextPromptBuilder } from "../agent/context-prompt.js";
 import { createNativeRuntimeAdapter } from "../runtime/runtime-adapters.js";
 import { createRuntimeHost, type RuntimeHost } from "../runtime/runtime-host.js";
@@ -138,7 +139,7 @@ export async function main(env: NodeJS.ProcessEnv = process.env, overrides: {
   const adapters = new Map<string, ReturnType<typeof createNativeRuntimeAdapter>>();
   env.LARKIN_DAEMON_EPOCH ||= new Date().toISOString();
   const runtimeHost = overrides.runtimeHost ?? createRuntimeHost({
-    promptBuilder: new ContextPromptBuilder(),
+    promptBuilder: new ContextPromptBuilder({ replyMode: replyModeFromEnv(env) }),
     stateStoreFor(agentId) {
       if (!env.LARKIN_HOME) throw new Error("LARKIN_HOME is required for Runtime delivery state");
       return createAgentStateStore(env.LARKIN_HOME, agentId);

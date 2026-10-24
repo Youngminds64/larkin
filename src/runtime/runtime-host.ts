@@ -35,6 +35,7 @@ import {
   PiCompactionRecoveryMachine,
 } from "./pi-compaction-recovery.js";
 import { effectivePiStateDir } from "./pi-state-dir.js";
+import { replyModeFromEnv } from "../platform/reply-mode.js";
 
 export interface AgentRuntimeConfig {
   agentId: string; name: string; displayName?: string | null; description?: string | null;
@@ -467,6 +468,7 @@ export function createRuntimeHost(options: {
     ...(process.env.BASH_ENV ? { BASH_ENV: process.env.BASH_ENV } : {}),
     PATH: [config.stateDir ? path.join(config.stateDir, "runtime-bin") : null, process.env.PATH].filter(Boolean).join(path.delimiter),
       LARKSUITE_CLI_CONFIG_DIR: config.larkConfigDir ?? process.env.LARKSUITE_CLI_CONFIG_DIR,
+      LARKIN_REPLY_MODE: replyModeFromEnv(process.env),
     };
     return config.larkConfigDir ? managedLarkCliEnv(config, base) : base;
   };

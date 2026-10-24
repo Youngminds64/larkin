@@ -199,6 +199,8 @@ class CodexSession extends EventSession {
   private requestId = 0;
   private threadId: string | null = null;
   private activeTurnId: string | null = null;
+  /** Set when Codex starts a new agentMessage item; marks its first text delta as a new block. */
+  private textBlockPending = false;
   private readonly turnOwnership = new Map<string, CodexTurnOwnership>();
   private readonly unassignedTurnInputs: string[] = [];
   private readonly recentTurnIds: string[] = [];
@@ -352,8 +354,12 @@ class CodexSession extends EventSession {
       this.activeTurnId = null;
       if (turnId) this.completeTurn(turnId);
       this.emit({ type: "turn-end", ...(this.threadId ? { sessionId: this.threadId } : {}), ...(turnId ? { turnId } : {}) });
+    } else if (message.method === "item/started" && message.params?.item?.type === "agentMessage") {
+      this.textBlockPending = true;
     } else if (message.method === "item/agentMessage/delta" && message.params?.delta) {
       this.emit({ type: "activity", activity: "text", text: String(message.params.delta) });
+      this.emit({ type: "text-delta", text: String(message.params.delta), ...(this.textBlockPending ? { newBlock: true } : {}) });
+      this.textBlockPending = false;
     } else if (message.method === "item/reasoning/summaryTextDelta" && message.params?.delta) {
       this.emit({ type: "activity", activity: "thinking", text: String(message.params.delta) });
     } else if (message.method === "error" || message.method === "codex/event/error") {
@@ -471,6 +477,7 @@ class ClaudeSession extends EventSession {
   private currentSessionId: string | null;
   private busy = false;
   private safeBoundary = true;
+  private textBlockPending = false;
   private readonly gated: Array<{ input: RuntimeInput; resolve: (result: RuntimeInputResult) => void }> = [];
 
   constructor(private readonly process: ProcessLike, resumeSessionId?: string) {
@@ -528,6 +535,15 @@ class ClaudeSession extends EventSession {
       }
     } else if (message.type === "stream_event") {
       this.safeBoundary = false;
+      // Partial text deltas (--include-partial-messages) drive the streaming card;
+      // the complete assistant message above still feeds activity/history.
+      const streamEvent = message.event;
+      if (streamEvent?.type === "content_block_start" && streamEvent.content_block?.type === "text") {
+        this.textBlockPending = true;
+      } else if (streamEvent?.type === "content_block_delta" && streamEvent.delta?.type === "text_delta" && streamEvent.delta.text) {
+        this.emit({ type: "text-delta", text: String(streamEvent.delta.text), ...(this.textBlockPending ? { newBlock: true } : {}) });
+        this.textBlockPending = false;
+      }
     } else if (message.type === "result") {
       this.busy = false;
       this.safeBoundary = true;
@@ -555,6 +571,7 @@ class PiSession extends EventSession {
   private readonly observedCompletedEpochs = new Set<number>();
   private readonly observedAgentEndEpochs = new Set<number>();
   private firstOutputObserved = false;
+  private textBlockPending = false;
   private toolCallOpen = false;
   readonly piPolicyManaged: boolean;
   constructor(private readonly sdk: PiSessionProcessLike, private readonly distribution: "external" = "external") {
@@ -772,6 +789,14 @@ class PiSession extends EventSession {
       }
       const kind = event.assistantMessageEvent.type?.startsWith("thinking") ? "thinking" : "text";
       this.emit({ type: "activity", activity: kind, text: String(event.assistantMessageEvent.delta) });
+      if (event.assistantMessageEvent.type === "text_delta") {
+        this.emit({ type: "text-delta", text: String(event.assistantMessageEvent.delta),
+          ...(this.textBlockPending ? { newBlock: true } : {}) });
+        this.textBlockPending = false;
+      }
+    }
+    else if (event?.type === "message_update" && event.assistantMessageEvent?.type === "text_start") {
+      this.textBlockPending = true;
     }
   }
 

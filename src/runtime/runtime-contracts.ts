@@ -44,6 +44,12 @@ export type NormalizedRuntimeEvent =
       reason?: "manual" | "threshold" | "overflow"; willRetry?: boolean; success?: boolean; inputId?: string; sessionId?: string }
   | { type: "turn-start"; turnId?: string }
   | { type: "activity"; activity: "thinking" | "text" | "tool" | "internal"; text?: string; name?: string }
+  /**
+   * Incremental user-facing assistant text, in output order. `newBlock` marks the
+   * first delta of a new assistant text block so a renderer can separate paragraphs.
+   * Feeds the streaming card reply; never contains thinking or tool payloads.
+   */
+  | { type: "text-delta"; text: string; newBlock?: boolean }
   | { type: "turn-end"; sessionId?: string; turnId?: string }
   | { type: "input-error"; inputId?: string; retryable: boolean; willRetry?: boolean; message: string;
       errorCategory?: "billing" | "quota" | "rate_limit" | "auth" | "context_window" | "provider"; nextAction?: string;
