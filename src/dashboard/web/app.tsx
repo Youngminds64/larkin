@@ -9,7 +9,7 @@ import { Badge, Button, EmptyState, Sheet, cn } from "./components/ui";
 import { RUNTIME_OPTIONS } from "../../runtime/user-runtime.js";
 
 const TAB_LABELS: Record<AgentTab, string> = {
-  activity: "动态", persona: "人设与能力", reply: "回复规则", advanced: "高级",
+  activity: "动态", persona: "设定", reply: "回复规则", advanced: "高级",
 };
 
 const bootstrap = window.__LARKIN_DASHBOARD__ || {
@@ -764,7 +764,7 @@ function AgentPersona({ agent, onDirtyChange }: { agent: DashboardAgent; onDirty
   const capabilities = useCapabilities(agentId, agent.runtime);
   const countOf = (kind: CapabilityKind) => capabilities.data?.items.filter((item) => item.kind === kind).length;
   return <section className="persona-section">
-    <div className="persona-switch" role="group" aria-label="人设与能力分类">
+    <div className="persona-switch" role="group" aria-label="设定分类">
       {(["agents", ...CAPABILITY_KINDS] as const).map((item) => <button key={item} type="button" aria-pressed={view === item} className={view === item ? "active" : ""} onClick={() => setView(item)}>
         {item === "agents" ? "AGENTS.md" : CAPABILITY_LABELS[item]}{item !== "agents" && countOf(item) !== undefined && !capabilities.data?.unsupported.includes(item) ? <small>{countOf(item)}</small> : null}
       </button>)}
