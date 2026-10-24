@@ -489,6 +489,8 @@ test("Codex sandbox defaults to danger-full-access and workspace-write keeps net
     },
   });
   assert.ok(!restricted.config.sandbox_workspace_write.writable_roots.includes("/tmp/larkin-root"));
+  assert.equal(Object.hasOwn(legacy, "serviceTier"), false, "fast mode off leaves the tier to the user's Codex config");
+  assert.equal((await startParams({ fastMode: true })).serviceTier, "fast");
 });
 
 test("Codex rejects unsupported app-server requests without treating them as notifications", async () => {

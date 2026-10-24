@@ -335,6 +335,36 @@ describe("Agent-centric dashboard workbench", () => {
     await waitFor(() => expect(applied).toEqual(["cli_AgentB2"]));
   });
 
+  it("turns on Codex Fast mode from the model settings and applies it", async () => {
+    const mutations: Array<Record<string, unknown>> = [];
+    const applied: string[] = [];
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/status") return ok(status);
+      if (url.pathname === "/api/config" && init?.method === "PATCH") {
+        mutations.push(JSON.parse(String(init.body)));
+        return ok({ revision: "sha256:fast", applyState: "saved_not_applied" });
+      }
+      if (url.pathname === "/api/config/apply" && init?.method === "POST") {
+        applied.push(JSON.parse(String(init.body)).agentId);
+        return ok({ ok: true, applyState: "applied" });
+      }
+      if (url.pathname === "/api/config") return ok(config(url.searchParams.get("agent") || undefined));
+      if (url.pathname === "/api/models/codex") return ok({ models: [{ id: "default", label: "default", supportsFast: true }] });
+      throw new Error(`unexpected request ${url}`);
+    }));
+    render(<App />);
+    await screen.findByRole("heading", { level: 1, name: "Builder" });
+    await userEvent.click(screen.getByRole("tab", { name: "设定" }));
+    const fast = await screen.findByLabelText("Fast 模式");
+    await waitFor(() => expect(fast).not.toBeDisabled());
+    expect(fast).not.toBeChecked();
+    await userEvent.click(fast);
+    await userEvent.click(screen.getByRole("button", { name: "保存并应用" }));
+    await waitFor(() => expect(mutations).toEqual([{ operation: "set-agent-fast-mode", agentId: "cli_AgentB2", value: true }]));
+    await waitFor(() => expect(applied).toEqual(["cli_AgentB2"]));
+  });
+
   it("filters the sidebar and preserves last-known status on polling errors", async () => {
     render(<App />);
     await screen.findByRole("heading", { level: 1, name: "Builder" });

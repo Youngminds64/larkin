@@ -100,7 +100,7 @@ export async function applyRuntimeAgentUpsert(
 
 export async function markConfigAppliedAfterRuntimeReady(
   env: NodeJS.ProcessEnv,
-  runningAgents: ReadonlyArray<{ agentId: string; runtime: string; model: string; effort?: string | null; sandbox?: string | null }>,
+  runningAgents: ReadonlyArray<{ agentId: string; runtime: string; model: string; effort?: string | null; sandbox?: string | null; fastMode?: boolean | null }>,
   runtimeReady: Promise<void>,
 ): Promise<void> {
   await runtimeReady;
@@ -110,7 +110,8 @@ export async function markConfigAppliedAfterRuntimeReady(
       const current = loaded.config.agents[running.agentId];
       if (!current || current.runtime !== running.runtime || current.model !== running.model
           || (current.effort || null) !== (running.effort || null)
-          || (current.sandbox || null) !== (running.sandbox || null)) continue;
+          || (current.sandbox || null) !== (running.sandbox || null)
+          || Boolean(current.fastMode) !== Boolean(running.fastMode)) continue;
       markConfigApplied(env, running.agentId, runtimeConfigSignature(loaded.config, running.agentId));
     }
   } catch { /* Runtime is ready; apply projection stays pending on a concurrent config change. */ }

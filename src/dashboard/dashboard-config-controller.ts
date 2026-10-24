@@ -272,9 +272,10 @@ export function createCodexModelDirectoryResolver(options: {
         pending = (async () => {
           const catalog = await discover({ cwd: input.cwd, env: input.env });
           const models = [
-            { id: "default", label: `default: ${catalog.effectiveModel}` },
-            ...catalog.models.map(({ id, label, supportedReasoningEfforts, defaultReasoningEffort }) => ({
-              id, label, supportedReasoningEfforts, ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
+            { id: "default", label: `default: ${catalog.effectiveModel}`,
+              supportsFast: catalog.models.find((model) => model.id === catalog.effectiveModel)?.supportsFast ?? false },
+            ...catalog.models.map(({ id, label, supportedReasoningEfforts, defaultReasoningEffort, supportsFast }) => ({
+              id, label, supportedReasoningEfforts, ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}), supportsFast,
             })),
           ];
           cache.set(key, { expiresAt: now() + ttlMs, value: models });
@@ -408,6 +409,7 @@ function dashboardMutation(value: Record<string, unknown>): ConfigMutation {
     "set-agent-model": ["operation", "agentId", "model"], "set-agent-effort": ["operation", "agentId", "effort"],
     "set-global-inbox-audit": ["operation", "enabled", "intervalMs"], "set-agent-inbox-audit": ["operation", "agentId", "enabled", "intervalMs"],
     "set-global-reply-mode": ["operation", "value"], "set-agent-sandbox": ["operation", "agentId", "value"],
+    "set-agent-fast-mode": ["operation", "agentId", "value"],
   };
   if (!allowed[operation] || Object.keys(value).some((key) => !allowed[operation].includes(key))) throw new Error("unsupported operation");
   if (operation === "set-global-mention") return { kind: operation, value: String(value.value) as "require" | "free" };
@@ -426,6 +428,10 @@ function dashboardMutation(value: Record<string, unknown>): ConfigMutation {
   if (operation === "set-agent-mention") return { kind: operation, agentId, value: String(value.value) as "inherit" | "require" | "free" };
   if (operation === "set-chat-mention") return { kind: operation, agentId, chatId: String(value.chatId || ""), value: String(value.value) as "inherit" | "require" | "free" };
   if (operation === "set-agent-runtime") return { kind: operation, agentId, runtime: String(value.runtime || ""), ...(value.model ? { model: String(value.model) } : {}) };
+  if (operation === "set-agent-fast-mode") {
+    if (typeof value.value !== "boolean") throw new Error("invalid fast mode");
+    return { kind: operation, agentId, value: value.value };
+  }
   if (operation === "set-agent-sandbox") return { kind: operation, agentId, value: String(value.value) as AgentSandbox };
   if (operation === "set-agent-model") return { kind: operation, agentId, model: String(value.model || "") };
   return { kind: "set-agent-effort", agentId, effort: value.effort === null || value.effort === "default" ? null : String(value.effort || "") };

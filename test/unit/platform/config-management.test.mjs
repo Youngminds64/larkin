@@ -354,6 +354,31 @@ test("sandbox is a user-only Agent setting that defaults to danger-full-access a
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test("Codex fast mode is stored only when on, needs apply, and is dropped when leaving codex", () => {
+  const { root, file } = fixture();
+  const env = { LARKIN_CONFIG_DIR: root };
+  try {
+    const signatureBefore = configApi.runtimeConfigSignature(configApi.loadConfig(env).config, APP);
+    assert.equal(configApi.safeConfigView(configApi.loadConfig(env).config, APP).agents[0].fastMode, false);
+    assert.throws(() => configApi.mutateConfig(env, { kind: "set-agent-fast-mode", agentId: OTHER, value: true }, { kind: "user" }), /codex/);
+
+    configApi.mutateConfig(env, { kind: "set-agent-fast-mode", agentId: APP, value: true }, { kind: "user" });
+    assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).agents[APP].fastMode, true);
+    const on = configApi.loadConfig(env).config;
+    assert.equal(on.agents[APP].fastMode, true);
+    assert.equal(configApi.safeConfigView(on, APP).agents[0].fastMode, true);
+    assert.notEqual(configApi.runtimeConfigSignature(on, APP), signatureBefore);
+
+    configApi.mutateConfig(env, { kind: "set-agent-fast-mode", agentId: APP, value: false }, { kind: "user" });
+    assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(file, "utf8")).agents[APP], "fastMode"), false);
+    assert.equal(configApi.runtimeConfigSignature(configApi.loadConfig(env).config, APP), signatureBefore);
+
+    configApi.mutateConfig(env, { kind: "set-agent-fast-mode", agentId: APP, value: true }, { kind: "user" });
+    configApi.mutateConfig(env, { kind: "set-agent-runtime", agentId: APP, runtime: "claude", model: "default" }, { kind: "user" });
+    assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(file, "utf8")).agents[APP], "fastMode"), false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("cross-process mutations serialize without losing either Agent update", async () => {
   const { root, file } = fixture();
   const script = `const config=require(process.argv[1]);config.mutateConfig({LARKIN_CONFIG_DIR:process.argv[2]},JSON.parse(process.argv[3]),{kind:"user"});`;

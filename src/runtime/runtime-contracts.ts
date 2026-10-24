@@ -76,6 +76,8 @@ export interface RuntimeSessionCreate {
   reasoningEffort?: string | null;
   /** Codex sandbox mode; null/absent keeps danger-full-access. */
   sandbox?: string | null;
+  /** Codex Fast service tier; false/absent leaves the tier to the user's Codex config. */
+  fastMode?: boolean;
   resumeSessionId?: string | null;
   env?: NodeJS.ProcessEnv;
 }

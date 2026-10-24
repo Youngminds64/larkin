@@ -371,6 +371,7 @@ class CodexSession extends EventSession {
           experimentalRawEvents: true,
           ...(configuredModel(this.config.model) ? { model: configuredModel(this.config.model) } : {}),
           ...codexSandboxParams(this.config),
+          ...(this.config.fastMode ? { serviceTier: "fast" } : {}),
         };
         this.freshThreadParams = threadParams;
         this.request(this.config.resumeSessionId ? "thread/resume" : "thread/start", this.config.resumeSessionId

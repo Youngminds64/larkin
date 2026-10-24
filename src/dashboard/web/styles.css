@@ -184,6 +184,9 @@ button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity:
 .audit-switch input:checked + span { border-color: var(--accent); background: var(--accent); }
 .audit-switch input:checked + span::after { transform: translateX(14px); background: var(--paper); }
 .audit-switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 3px; }
+.fast-mode-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 14px; }
+.fast-mode-row strong { font-size: 13px; }
+.fast-mode-row .field-help { margin: 2px 0 0; }
 .audit-switch input:disabled + span { opacity: .55; }
 .audit-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .audit-inline-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

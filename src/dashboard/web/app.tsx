@@ -384,7 +384,7 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
         ? agent.inboxAudit.effective.intervalMs : agent.inboxAudit.override.intervalMs;
       const values = {
         runtime: agent.runtimeOption || agent.runtime, model: agent.model, effort: agent.effort || "default", mention: agent.mention.override,
-        sandbox: agent.sandbox || "danger-full-access",
+        sandbox: agent.sandbox || "danger-full-access", fastMode: agent.fastMode === true,
         auditEnabled: agent.inboxAudit.override.enabled,
         auditIntervalInherited: agent.inboxAudit.override.intervalMs === "inherit",
         auditGapMinutes: formatAuditGapMinutes(intervalMs),
@@ -430,8 +430,11 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
     : [{ id: model, label: unavailableLabel }];
   const efforts = directoryReady && model !== "default" ? models.find((item) => item.id === model)?.supportedReasoningEfforts || [] : [];
   const sandboxDirty = draft.sandbox !== serverDraft.sandbox;
+  const fastDirty = draft.fastMode !== serverDraft.fastMode;
+  // Unknown until the directory loads; only an explicit false from the catalog blocks the switch.
+  const fastSupported = runtime === "codex" && !(directoryReady && models.find((item) => item.id === model)?.supportsFast === false);
   // Sandbox is a Codex launch parameter, so it is applied the same way as a model change.
-  const runtimeDirty = draft.runtime !== serverDraft.runtime || draft.model !== serverDraft.model || draft.effort !== serverDraft.effort || sandboxDirty;
+  const runtimeDirty = draft.runtime !== serverDraft.runtime || draft.model !== serverDraft.model || draft.effort !== serverDraft.effort || sandboxDirty || fastDirty;
   const auditEnabled = draft.auditEnabled === "on" || draft.auditEnabled === "off" ? draft.auditEnabled : "inherit";
   const auditIntervalInherited = draft.auditIntervalInherited === true;
   const auditGapMinutes = String(draft.auditGapMinutes || "");
@@ -458,6 +461,7 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
       if (draft.runtime !== serverDraft.runtime) operations.push({ operation: "set-agent-runtime", agentId, runtime: draft.runtime, model: draft.model });
       else if (draft.model !== serverDraft.model) operations.push({ operation: "set-agent-model", agentId, model: draft.model });
       if (draft.effort !== serverDraft.effort) operations.push({ operation: "set-agent-effort", agentId, effort: draft.effort });
+      if (fastDirty) operations.push({ operation: "set-agent-fast-mode", agentId, value: draft.fastMode === true });
       if (sandboxDirty) operations.push({ operation: "set-agent-sandbox", agentId, value: draft.sandbox });
       if (draft.mention !== serverDraft.mention) operations.push({ operation: "set-agent-mention", agentId, value: draft.mention });
       if (auditDirty) operations.push({
@@ -558,10 +562,11 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
       <p className="cli-guidance">更多选项可以让 Agent 运行 <code>larkin config --help</code> 自己改。</p>
       {readiness ? <p className="field-help">{formatReadiness(readiness)}</p> : null}
       <div className="config-grid">
-        <label><span>Runtime</span><select value={runtime} disabled={loading} onChange={(event) => { update("runtime", event.target.value); update("model", "default"); update("effort", "default"); }}>{(response?.runtimeOptions || RUNTIME_OPTIONS).map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
+        <label><span>Runtime</span><select value={runtime} disabled={loading} onChange={(event) => { update("runtime", event.target.value); update("model", "default"); update("effort", "default"); if (event.target.value !== "codex") update("fastMode", false); }}>{(response?.runtimeOptions || RUNTIME_OPTIONS).map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
         <label><span>Model</span><select value={model} disabled={loading || !directoryReady} onChange={(event) => { update("model", event.target.value); if (event.target.value === "default") update("effort", "default"); }}>{visibleModels.map((item) => <option value={item.id} key={item.id}>{item.label || item.id}</option>)}</select></label>
         <label><span>Effort</span><select value={String(draft.effort || "default")} disabled={loading || !directoryReady || model === "default" || !efforts.length} onChange={(event) => update("effort", event.target.value)}><option value="default">default · 不指定</option>{efforts.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
       </div>
+      {runtime === "codex" ? <div className="fast-mode-row"><div><strong>Fast 模式</strong><p className="field-help">{fastSupported ? "回复更快，消耗的用量也更多。关闭时跟随本机 Codex 自己的设置。" : "这个模型不支持 Fast。"}</p></div><label className="audit-switch"><input type="checkbox" aria-label="Fast 模式" checked={draft.fastMode === true} disabled={loading || (!fastSupported && draft.fastMode !== true)} onChange={(event) => update("fastMode", event.target.checked)} /><span aria-hidden="true" /><b>{draft.fastMode === true ? "已开启" : "已关闭"}</b></label></div> : null}
       {actions}{status}
     </section>
   </div>;

@@ -65,6 +65,7 @@ interface ConfiguredAgent {
   model: string;
   effort?: string | null;
   sandbox?: string | null;
+  fastMode?: boolean | null;
   displayName?: string | null;
   description?: string | null;
   feishuAppId: string;
@@ -253,6 +254,7 @@ function agentConfigSignature(agent: ConfiguredAgent): string {
     // Only present once configured, so upgrading does not restart unchanged Agents.
     ...(agent.replyMode ? { replyMode: agent.replyMode } : {}),
     ...(agent.sandbox ? { sandbox: agent.sandbox } : {}),
+    ...(agent.fastMode ? { fastMode: true } : {}),
   });
 }
 

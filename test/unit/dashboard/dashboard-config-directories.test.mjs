@@ -472,13 +472,14 @@ test("Codex model directory reuses app-server model/list with five-minute cachin
   const discoverCodexModelCatalog = async (options) => {
     calls.push(options);
     await Promise.resolve();
-    return { effectiveModel: "gpt-5.4-mini", models: [{ id: "gpt-5.4-mini", label: "GPT-5.4-Mini", supportedReasoningEfforts: ["low", "medium"], defaultReasoningEffort: "medium" }] };
+    return { effectiveModel: "gpt-5.4-mini", models: [{ id: "gpt-5.4-mini", label: "GPT-5.4-Mini", supportedReasoningEfforts: ["low", "medium"], defaultReasoningEffort: "medium", supportsFast: true }] };
   };
   const resolver = module.createCodexModelDirectoryResolver({ discoverCodexModelCatalog, now: () => now, ttlMs: 5 * 60_000 });
   const input = { agentId: APP, cwd: "/tmp/codex-workspace", env: { CODEX_HOME: "/tmp/codex-home" } };
 
   const [first, concurrent] = await Promise.all([resolver.resolve(input), resolver.resolve(input)]);
   assert.deepEqual(first.map(({ id }) => id), ["default", "gpt-5.4-mini"]);
+  assert.deepEqual(first.map(({ supportsFast }) => supportsFast), [true, true], "default inherits the effective model's Fast support");
   assert.equal(first[0].label, "default: gpt-5.4-mini");
   assert.equal(Object.hasOwn(first[0], "supportedReasoningEfforts"), false);
   assert.equal(Object.hasOwn(first[0], "defaultReasoningEffort"), false);
