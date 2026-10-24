@@ -611,9 +611,56 @@ describe("Agent-centric dashboard workbench", () => {
     render(<App />);
     await screen.findByRole("heading", { level: 1, name: "Builder" });
     await userEvent.click(screen.getByRole("tab", { name: "工作区" }));
-    await screen.findByText("只读工作区");
+    await screen.findByText("未选择文件");
     expect(document.querySelector(".agent-content")).toHaveClass("workspace-active");
     expect(document.querySelector(".workspace-browser")).toBeVisible();
+  });
+
+  it("edits a workspace text file with an explicit save and surfaces a concurrent-edit conflict", async () => {
+    const original = { kind: "file", path: "AGENTS.md", name: "AGENTS.md", size: 10, modifiedAt: "2026-10-24T10:00:00.000Z",
+      binary: false, truncated: false, content: "old rules\n", sha256: "a".repeat(64) };
+    const writes: Array<Record<string, unknown>> = [];
+    let conflict = false;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/status") return ok(status);
+      if (url.pathname === "/api/config") return ok(config(url.searchParams.get("agent") || undefined));
+      if (url.pathname === "/api/models/codex") return ok({ models: [{ id: "default", label: "default" }] });
+      if (url.pathname === "/api/workspace/file" && init?.method === "PUT") {
+        writes.push(JSON.parse(String(init.body)));
+        if (conflict) return Promise.resolve({ ok: false, status: 409, json: async () => ({ error: "文件已被修改，请重新加载后再编辑" }) });
+        const body = JSON.parse(String(init.body));
+        return ok({ ...original, content: body.content, sha256: "b".repeat(64) });
+      }
+      if (url.pathname === "/api/workspace" && url.searchParams.get("path") === "AGENTS.md") return ok(original);
+      if (url.pathname === "/api/workspace") return ok({ kind: "directory", path: "", parent: null, entries: [
+        { name: "AGENTS.md", path: "AGENTS.md", kind: "file", size: 10, modifiedAt: "2026-10-24T10:00:00.000Z" },
+      ] });
+      throw new Error(`unexpected request ${url}`);
+    }));
+    render(<App />);
+    await screen.findByRole("heading", { level: 1, name: "Builder" });
+    await userEvent.click(screen.getByRole("tab", { name: "工作区" }));
+    await userEvent.click(await screen.findByRole("button", { name: /AGENTS\.md/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "编辑" }));
+    const editor = screen.getByLabelText("编辑 AGENTS.md");
+    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+    await userEvent.clear(editor);
+    await userEvent.type(editor, "new rules");
+    expect(screen.getByLabelText("未保存")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("下一次开启新会话"));
+    expect(writes).toEqual([{ agentId: "cli_AgentB2", path: "AGENTS.md", content: "new rules", expectedSha256: "a".repeat(64) }]);
+    expect(screen.queryByLabelText("编辑 AGENTS.md")).not.toBeInTheDocument();
+
+    conflict = true;
+    await userEvent.click(screen.getByRole("button", { name: "编辑" }));
+    await userEvent.type(screen.getByLabelText("编辑 AGENTS.md"), "!");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("已被 Agent 或其他人修改"));
+    expect(writes[1]).toMatchObject({ content: "new rules!", expectedSha256: "b".repeat(64) });
+    expect(screen.getByLabelText("编辑 AGENTS.md")).toHaveValue("new rules!");
+    expect(screen.getByRole("button", { name: "载入最新版本" })).toBeVisible();
   });
 
   it("does not render Provider Credentials and keeps only three runtime options", async () => {

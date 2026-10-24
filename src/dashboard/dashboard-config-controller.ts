@@ -365,7 +365,7 @@ function json(res: http.ServerResponse, status: number, value: unknown): void {
   res.end(JSON.stringify(value));
 }
 
-function assertWriteRequest(req: http.IncomingMessage, csrfCapability: string): void {
+export function assertWriteRequest(req: http.IncomingMessage, csrfCapability: string): void {
   const host = String(req.headers.host || "");
   if (!/^(?:localhost|127\.0\.0\.1):\d+$/.test(host)) throw new Error("invalid host");
   const expectedOrigin = `http://${host}`;
@@ -382,19 +382,19 @@ function assertPrivateReadRequest(req: http.IncomingMessage, csrfCapability: str
   if (req.headers["x-larkin-csrf"] !== csrfCapability) throw new Error("capability rejected");
 }
 
-async function boundedJson(req: http.IncomingMessage): Promise<Record<string, unknown>> {
+export async function boundedJson(req: http.IncomingMessage, limit = 16 * 1024): Promise<Record<string, unknown>> {
   const declaredLength = Number(req.headers["content-length"] || 0);
-  if (Number.isFinite(declaredLength) && declaredLength > 16 * 1024) throw new Error("request too large");
+  if (Number.isFinite(declaredLength) && declaredLength > limit) throw new Error("request too large");
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     const bytes = Buffer.from(chunk);
     size += bytes.length;
-    if (size > 16 * 1024) throw new Error("request too large");
+    if (size > limit) throw new Error("request too large");
     chunks.push(bytes);
   }
   const body = Buffer.concat(chunks);
-  if (body.byteLength > 16 * 1024) throw new Error("request too large");
+  if (body.byteLength > limit) throw new Error("request too large");
   const value = JSON.parse(body.toString("utf8"));
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("JSON object required");
   return value as Record<string, unknown>;
