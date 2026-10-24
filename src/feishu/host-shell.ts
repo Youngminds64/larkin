@@ -56,6 +56,7 @@ import {
 import type { CommentEvent, CommentTarget, FetchedComment } from "@larksuite/channel";
 import type { TelemetryRuntime } from "../platform/telemetry-tracing.js";
 import { isOpenPlatformHost, requireOpenDomain } from "./platform-hosts.js";
+import { replyModeFromEnv, STREAM_REPLY_INITIAL_TEXT, StreamReplyCoordinator, type ReplyMode, type StreamReplyChannel } from "./stream-reply.js";
 
 interface ConfiguredAgent {
   agentId: string;
@@ -73,6 +74,7 @@ interface ConfiguredAgent {
   workspaceDir: string;
   stateDir: string;
   noMentionChats?: string[];
+  replyMode?: ReplyMode | null;
   botOpenId?: string | null;
   botName?: string | null;
 }
@@ -247,6 +249,8 @@ function agentConfigSignature(agent: ConfiguredAgent): string {
     larkConfigDir: agent.larkConfigDir, feishuDomain: agent.feishuDomain,
     feishuAppSecret: agent.feishuAppSecret, workspaceDir: agent.workspaceDir, stateDir: agent.stateDir,
     noMentionChats: agent.noMentionChats || [],
+    // Only present once configured, so upgrading does not restart unchanged Agents.
+    ...(agent.replyMode ? { replyMode: agent.replyMode } : {}),
   });
 }
 
@@ -707,6 +711,14 @@ export function createHostShell({
     }
   };
   const interactionChannels = new Map<string, LarkChannel>();
+  // Card reply mode: the Host streams each polled message's reply into a Feishu card.
+  const cardReplyAgent = (agentId: string): boolean =>
+    (agents.find((agent) => agent.agentId === agentId)?.replyMode ?? replyModeFromEnv(env)) === "card";
+  const streamReplies = new StreamReplyCoordinator({
+    channelFor: (agentId) => interactionChannels.get(agentId) as unknown as StreamReplyChannel | undefined,
+    resolveSource: (agentId) => stateStore({ agentId }).resolveCurrentInboxSource(),
+    log,
+  });
   const interaction = new HostInteractionOrchestrator({
     agents,
     stateStore,
@@ -1004,6 +1016,7 @@ export function createHostShell({
   const startChannelSource = (agent: ConfiguredAgent, callbacks: { onConnectFail?(error: unknown): void; onFatal?(error: Error): void }): LarkChannel => {
     const { createLarkChannel } = channelPackage ?? channelSdk as unknown as ChannelPackage;
     log(`入站(createLarkChannel): agent=${agent.name} app=${agent.feishuAppId} (群需@)`);
+    log(`回复方式 agent=${agent.name} mode=${cardReplyAgent(agent.agentId) ? "card(流式卡片)" : "cli(命令行回复)"}`);
     const channel = createLarkChannel({
       appId: agent.feishuAppId,
       appSecret: agent.feishuAppSecret,
@@ -1023,6 +1036,7 @@ export function createHostShell({
         },
       },
       includeRawEvent: true,
+      outbound: { streamInitialText: STREAM_REPLY_INITIAL_TEXT },
     });
     interactionChannels.set(agent.agentId, channel);
     channel.on(channelBusiness.handlers(agent, channel));
@@ -1123,6 +1137,7 @@ export function createHostShell({
         handshakeTimeoutMs: 15_000,
         keepalive: { enabled: true, intervalMs: 15_000 },
         includeRawEvent: true,
+        outbound: { streamInitialText: STREAM_REPLY_INITIAL_TEXT },
       });
       const handlers = channelBusiness.handlers(agent, channel);
       let active = activateImmediately;
@@ -1436,6 +1451,10 @@ export function createHostShell({
   const onRuntimeEvent = (message: RuntimeHostEvent): void => {
     const agent = agents.find((candidate) => candidate.agentId === message.agentId);
     if (!agent) return;
+    if (message.type === "runtime") {
+      try { if (cardReplyAgent(message.agentId)) streamReplies.observe(message.agentId, message.event); }
+      catch (error) { log(`流式卡片回复异常 agent=${agent.name}: ${errorMessage(error)}`); }
+    }
     if (message.type === "agent-status") {
       log("agent:status", message.agentId, message.status);
       const observedAt = new Date().toISOString();

@@ -207,6 +207,40 @@ describe("Agent-centric dashboard workbench", () => {
     expect(within(dialog).getByRole("status")).toHaveTextContent("已保存");
   });
 
+  it("saves the global reply mode and re-applies it to every Agent, reporting busy ones", async () => {
+    const mutations: Array<Record<string, unknown>> = [];
+    const applied: string[] = [];
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/status") return ok(status);
+      if (url.pathname === "/api/config" && init?.method === "PATCH") {
+        mutations.push(JSON.parse(String(init.body)));
+        return ok({ revision: "sha256:global-reply-mode", applyState: "saved_not_applied" });
+      }
+      if (url.pathname === "/api/config/apply") {
+        const { agentId } = JSON.parse(String(init?.body));
+        applied.push(agentId);
+        return agentId === "cli_AgentA1"
+          ? Promise.resolve({ ok: false, status: 409, json: async () => ({ error: "configuration saved but apply failed" }) })
+          : ok({ ok: true, agentId, applyState: "applied" });
+      }
+      if (url.pathname === "/api/config") return ok(config(url.searchParams.get("agent") || undefined));
+      if (url.pathname === "/api/models/codex") return ok({ models: [{ id: "default", label: "default" }] });
+      throw new Error(`unexpected request ${url}`);
+    }));
+    render(<App />);
+    await screen.findByRole("heading", { level: 1, name: "Builder" });
+    await userEvent.click(screen.getByRole("button", { name: "全局设置" }));
+    const dialog = await screen.findByRole("dialog");
+    const replyMode = within(dialog).getByLabelText("回复方式");
+    expect(replyMode).toHaveValue("card");
+    await userEvent.selectOptions(replyMode, "cli");
+    await userEvent.click(within(dialog).getByRole("button", { name: "保存全局设置" }));
+    await waitFor(() => expect(within(dialog).getByRole("status")).toHaveTextContent("cli_AgentA1 暂未应用"));
+    expect(mutations).toEqual([{ operation: "set-global-reply-mode", value: "cli" }]);
+    expect(applied).toEqual(["cli_AgentA1", "cli_AgentB2", "cli_AgentC3"]);
+  });
+
   it("does not expose a processing-eye toggle after the switch was removed", async () => {
     render(<App />);
     await screen.findByRole("heading", { level: 1, name: "Builder" });

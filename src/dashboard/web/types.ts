@@ -127,6 +127,8 @@ export interface ConfigResponse {
   version: 4;
   mentionPolicy: "require" | "free";
   inboxAudit: { enabled: boolean; intervalMs: number };
+  /** null: not configured; the Runtime falls back to LARKIN_REPLY_MODE, else card. */
+  replyMode: "card" | "cli" | null;
   persistedRevision: string;
   agents: ConfigAgent[];
   runtimeModels: Record<string, RuntimeModel[]>;
