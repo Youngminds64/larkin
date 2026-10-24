@@ -216,7 +216,7 @@ button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity:
 .workspace-preview .dirty-dot { margin-left: 6px; color: var(--accent, currentColor); font-size: 10px; vertical-align: middle; }
 .workspace-feedback { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0; padding: 8px 14px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
 .workspace-feedback.danger { color: var(--danger, #b42318); }
-.workspace-preview.editing { display: flex; flex-direction: column; }
+.workspace-preview:has(> .workspace-editor) { display: flex; flex-direction: column; }
 .workspace-editor { flex: 1; min-height: 360px; width: 100%; box-sizing: border-box; margin: 0; padding: 16px; border: 0; resize: none; outline: none; background: transparent; color: inherit; font: 11.5px/1.65 ui-monospace, monospace; tab-size: 2; }
 .workspace-preview pre { margin: 0; padding: 16px; white-space: pre-wrap; overflow-wrap: anywhere; font: 11.5px/1.65 ui-monospace, monospace; }
 .logs-section { max-width: 920px; }

@@ -1,6 +1,6 @@
 import type http from "node:http";
 import { assertWriteRequest, boundedJson } from "./dashboard-config-controller.js";
-import { collectWorkspaceEntry, writeWorkspaceFile } from "./dashboard-view-model.js";
+import { collectInstructionFiles, collectWorkspaceEntry, createInstructionFile, writeWorkspaceFile } from "./dashboard-view-model.js";
 
 function statusCodeOf(error: unknown): number {
   return typeof error === "object" && error !== null && "statusCode" in error && typeof error.statusCode === "number" ? error.statusCode : 500;
@@ -11,7 +11,7 @@ function json(res: http.ServerResponse, statusCode: number, body: unknown): void
   res.end(JSON.stringify(body));
 }
 
-/** Workspace browsing (GET) and CSRF-protected text-file saves (PUT) for the dashboard server. */
+/** Workspace browsing (GET), rule files (AGENTS.md / CLAUDE.md), and CSRF-protected text-file writes for the dashboard server. */
 export function createDashboardWorkspaceController({ csrfCapability }: { csrfCapability: string }) {
   return {
     async handle(req: http.IncomingMessage, res: http.ServerResponse, requestUrl: URL): Promise<boolean> {
@@ -32,6 +32,29 @@ export function createDashboardWorkspaceController({ csrfCapability }: { csrfCap
         } catch (error) {
           json(res, statusCodeOf(error), { error: error instanceof Error ? error.message : String(error) });
         }
+        return true;
+      }
+      if (requestUrl.pathname === "/api/agent-rules/file" && req.method === "POST") {
+        let body: Record<string, unknown>;
+        try {
+          assertWriteRequest(req, csrfCapability);
+          body = await boundedJson(req, 3 * 1024 * 1024);
+        } catch {
+          json(res, 403, { error: "rule file create rejected" });
+          return true;
+        }
+        try {
+          const created = createInstructionFile(body);
+          console.log(`[dashboard] rule file create agent=${String(body.agentId)} name=${String(body.name)} bytes=${Buffer.byteLength(String(body.content))}`);
+          json(res, 200, created);
+        } catch (error) {
+          json(res, statusCodeOf(error), { error: error instanceof Error ? error.message : String(error) });
+        }
+        return true;
+      }
+      if (requestUrl.pathname === "/api/agent-rules") {
+        try { json(res, 200, collectInstructionFiles(requestUrl.searchParams.get("agent"))); }
+        catch (error) { json(res, statusCodeOf(error), { error: error instanceof Error ? error.message : String(error) }); }
         return true;
       }
       if (requestUrl.pathname === "/api/workspace") {

@@ -187,3 +187,65 @@ export function writeWorkspaceFile(
   catch (error) { fs.rmSync(temp, { force: true }); throw error; }
   return collectWorkspaceEntry(config, agentId, requestedPath, maxFileBytes);
 }
+
+/** Root-level rule files the runtimes read on every new session (Codex/Pi: AGENTS.md, Claude: CLAUDE.md). */
+export const INSTRUCTION_FILE_NAMES = ["AGENTS.md", "CLAUDE.md"] as const;
+type InstructionFileName = typeof INSTRUCTION_FILE_NAMES[number];
+
+export interface InstructionFileView {
+  name: InstructionFileName;
+  /** Workspace-relative target when the file is a symlink to another workspace file (e.g. CLAUDE.md -> AGENTS.md). */
+  linkedTo: string | null;
+  file: Extract<WorkspaceProjection, { kind: "file" }> | null;
+  error: string | null;
+}
+
+export function collectInstructionFiles(config: DashboardWorkspaceConfig, agentId: string): { files: InstructionFileView[] } {
+  const root = workspaceRootForAgent(config, agentId);
+  return {
+    files: INSTRUCTION_FILE_NAMES.map((name) => {
+      let linkedTo: string | null = null;
+      try {
+        if (fs.lstatSync(path.join(root, name)).isSymbolicLink()) {
+          const target = fs.realpathSync(path.join(root, name));
+          linkedTo = inside(root, target) ? path.relative(root, target).split(path.sep).join("/") : null;
+        }
+      } catch { /* missing or dangling: reported below */ }
+      try {
+        const entry = collectWorkspaceEntry(config, agentId, name);
+        if (entry.kind !== "file") return { name, linkedTo, file: null, error: `${name} 是目录，不是文件` };
+        return { name, linkedTo, file: entry, error: null };
+      } catch (error) {
+        if ((error as StatusError).statusCode === 404) return { name, linkedTo, file: null, error: null };
+        return { name, linkedTo, file: null, error: error instanceof Error ? error.message : String(error) };
+      }
+    }),
+  };
+}
+
+/** Create a missing AGENTS.md / CLAUDE.md at the workspace root; never overwrites an existing file or link. */
+export function createInstructionFile(
+  config: DashboardWorkspaceConfig,
+  agentId: string,
+  name: unknown,
+  content: unknown,
+  maxFileBytes = MAX_WORKSPACE_EDIT_BYTES,
+): WorkspaceProjection {
+  if (!INSTRUCTION_FILE_NAMES.includes(name as InstructionFileName)) throw httpError("只能新建 AGENTS.md 或 CLAUDE.md", 400);
+  if (typeof content !== "string") throw httpError("需要 content", 400);
+  const next = Buffer.from(content, "utf8");
+  if (next.byteLength > maxFileBytes) throw httpError("内容超过 1 MB", 413);
+  if (next.includes(0)) throw httpError("内容不能包含 NUL 字符", 400);
+  const root = workspaceRootForAgent(config, agentId);
+  let fd: number;
+  try { fd = fs.openSync(path.join(root, name as string), "wx", 0o644); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw httpError("文件已存在，请重新加载", 409);
+    throw error;
+  }
+  try {
+    fs.writeFileSync(fd, next);
+    fs.fsyncSync(fd);
+  } finally { fs.closeSync(fd); }
+  return collectWorkspaceEntry(config, agentId, name, maxFileBytes);
+}
