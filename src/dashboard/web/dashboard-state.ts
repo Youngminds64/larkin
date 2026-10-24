@@ -1,10 +1,10 @@
-export const AGENT_TABS = ["activity", "persona", "reply", "runtime"] as const;
+export const AGENT_TABS = ["activity", "persona", "reply", "advanced"] as const;
 export type AgentTab = typeof AGENT_TABS[number];
 
 /** Tab ids from the earlier seven-tab layout, so saved links still open the page that now holds that content. */
 const LEGACY_TABS: Record<string, AgentTab> = {
   overview: "activity", conversation: "activity", reminders: "activity",
-  rules: "persona", configuration: "runtime", workspace: "runtime", logs: "runtime",
+  rules: "persona", configuration: "persona", runtime: "persona", workspace: "advanced", logs: "advanced",
 };
 
 export interface RouteState {

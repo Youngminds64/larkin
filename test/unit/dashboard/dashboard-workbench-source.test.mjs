@@ -14,7 +14,7 @@ test("dashboard ships an authored React Agent workbench instead of an inline car
   assert.match(app, /AgentSidebar/);
   assert.match(app, /GlobalSettingsSheet/);
   assert.match(app, /GroupPolicyTable/);
-  for (const tab of ["activity", "persona", "reply", "runtime"]) {
+  for (const tab of ["activity", "persona", "reply", "advanced"]) {
     assert.match(state, new RegExp(`(?:^|[\\s\"'])${tab}(?:[\\s\"',]|$)`));
   }
   assert.match(template, /dashboard-assets\/dashboard\.css/);
