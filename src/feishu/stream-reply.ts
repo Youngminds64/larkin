@@ -79,7 +79,9 @@ class CardReply {
         else this.push();
       }),
     }, { replyTo: address.anchor, replyInThread: address.inThread })
-      .then(() => undefined, (error: unknown) => {
+      .then(({ messageId }) => {
+        log(`流式卡片已发送 anchor=${address.anchor} message=${messageId} chars=${this.text.length}`);
+      }, (error: unknown) => {
         log(`流式卡片回复失败 anchor=${address.anchor}: ${error instanceof Error ? error.message : String(error)}`);
       });
   }
@@ -133,6 +135,9 @@ interface TurnState {
   /** Address of the latest poll even before any text arrives; used for failure replies. */
   lastAddress: ReplyAddress | null;
   failed: string | null;
+  /** Diagnostics: assistant text seen this turn and cards opened for it. */
+  textChars: number;
+  cards: number;
 }
 
 export class StreamReplyCoordinator {
@@ -182,11 +187,12 @@ export class StreamReplyCoordinator {
   }
 
   private freshTurn(): TurnState {
-    return { card: null, needsResolve: true, lastResolveAt: 0, pendingBreak: false, lastAddress: null, failed: null };
+    return { card: null, needsResolve: true, lastResolveAt: 0, pendingBreak: false, lastAddress: null, failed: null, textChars: 0, cards: 0 };
   }
 
   private onText(agentId: string, turn: TurnState, text: string, newBlock: boolean): void {
     if (!text) return;
+    turn.textChars += text.length;
     const address = this.currentAddress(agentId, turn);
     if (!address) {
       if (turn.card) { turn.card.finish(); turn.card = null; }
@@ -196,6 +202,7 @@ export class StreamReplyCoordinator {
       turn.card?.finish();
       turn.card = this.open(agentId, address);
       if (!turn.card) return;
+      turn.cards += 1;
       turn.pendingBreak = false;
     } else if ((newBlock || turn.pendingBreak) && turn.card.text && !turn.card.text.endsWith("\n\n")) {
       turn.card.append(turn.card.text.endsWith("\n") ? "\n" : "\n\n");
@@ -230,6 +237,10 @@ export class StreamReplyCoordinator {
     const turn = this.turns.get(agentId);
     if (!turn) return;
     this.turns.delete(agentId);
+    if (turn.textChars || turn.failed) {
+      this.log(`流式回复回合结束 agent=${agentId} text=${turn.textChars} cards=${turn.cards}${turn.failed ? " failed" : ""}`
+        + (turn.textChars && !turn.cards ? "（有回复文字但本回合没有领取到消息，文字未发送）" : ""));
+    }
     if (!turn.failed) { turn.card?.finish(); return; }
     // A failed turn after a poll must not leave the user unanswered.
     if (!turn.card) {

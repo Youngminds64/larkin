@@ -1016,6 +1016,7 @@ export function createHostShell({
   const startChannelSource = (agent: ConfiguredAgent, callbacks: { onConnectFail?(error: unknown): void; onFatal?(error: Error): void }): LarkChannel => {
     const { createLarkChannel } = channelPackage ?? channelSdk as unknown as ChannelPackage;
     log(`入站(createLarkChannel): agent=${agent.name} app=${agent.feishuAppId} (群需@)`);
+    log(`回复方式 agent=${agent.name} mode=${cardReplyAgent(agent.agentId) ? "card(流式卡片)" : "cli(命令行回复)"}`);
     const channel = createLarkChannel({
       appId: agent.feishuAppId,
       appSecret: agent.feishuAppSecret,

@@ -80,6 +80,27 @@ test("text after the poll streams into one card replying to the polled message; 
   assert.equal(card.outcome, "completed");
 });
 
+test("each turn with reply text logs a diagnostic summary, flagging text that had no polled message", async () => {
+  const { state, logs, coordinator, send } = harness();
+  send({ type: "turn-start" });
+  send({ type: "text-delta", text: "没有领取消息就写的回复", newBlock: true });
+  send({ type: "turn-end" });
+  assert.match(logs.at(-1), /流式回复回合结束 agent=agent-1 text=11 cards=0（有回复文字但本回合没有领取到消息，文字未发送）/);
+
+  state.source = { deliveryTarget: "chat:oc_room", deliveryAnchor: "om_user" };
+  send({ type: "turn-start" });
+  send({ type: "text-delta", text: "你好", newBlock: true });
+  send({ type: "turn-end" });
+  await coordinator.idle();
+  assert.ok(logs.includes("流式回复回合结束 agent=agent-1 text=2 cards=1"));
+  assert.ok(logs.includes("流式卡片已发送 anchor=om_user message=om_card_1 chars=2"));
+
+  const before = logs.length;
+  send({ type: "turn-start" });
+  send({ type: "turn-end" });
+  assert.equal(logs.length, before, "a silent turn logs nothing");
+});
+
 test("a thread source keeps the card reply inside the same topic", async () => {
   const { channel, coordinator, send } = harness({ deliveryTarget: "thread:oc_room:omt_topic", deliveryAnchor: "om_in_topic" });
   send({ type: "turn-start" });
