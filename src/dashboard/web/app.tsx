@@ -506,8 +506,8 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
     </section>
   </div>;
   return <div className="configuration-page">
-    <section className="config-section"><div className="section-heading"><div><h3>Runtime 与模型</h3><p>只作用于 {agentId}；运行配置会在安全时机自动应用，Agent 正忙时会保留待处理。</p></div><Badge className={config.apply.applyState === "pending" ? "warning" : "success"}>{applyStateLabel}</Badge></div>
-      <p className="cli-guidance">这里只提供常用微调。更多配置可以直接告诉当前 Agent，让它运行 <code>larkin config --help</code> 后完成。</p>
+    <section className="config-section"><div className="section-heading"><div><h3>模型</h3><p>这个 Agent 用哪个 Runtime 和模型。保存后自动应用，Agent 正忙时会等它空下来再切换。</p></div><Badge className={config.apply.applyState === "pending" ? "warning" : "success"}>{applyStateLabel}</Badge></div>
+      <p className="cli-guidance">更多选项可以让 Agent 运行 <code>larkin config --help</code> 自己改。</p>
       {readiness ? <p className="field-help">{formatReadiness(readiness)}</p> : null}
       <div className="config-grid">
         <label><span>Runtime</span><select value={runtime} disabled={loading} onChange={(event) => { update("runtime", event.target.value); update("model", "default"); update("effort", "default"); }}>{(response?.runtimeOptions || RUNTIME_OPTIONS).map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
@@ -738,7 +738,7 @@ function AgentPersona({ agent, onDirtyChange }: { agent: DashboardAgent; onDirty
       </button>)}
     </div>
     <div hidden={view !== "agents"}>
-      <div className="section-heading"><div><h3>人设与规则</h3><p>新会话开始时读取。Codex、Pi 直接读 AGENTS.md，Claude 通过 CLAUDE.md 里的 <code>@AGENTS.md</code> 引用。改完从下一个新会话开始生效。</p></div></div>
+      <p className="field-help">新会话开始时读取，改完从下一个新会话生效。Claude 通过 CLAUDE.md 里的 <code>@AGENTS.md</code> 读到它。</p>
       {error ? <p role="alert" className="workspace-feedback danger">{error}</p> : null}
       {claudeNote ? <p className="persona-note">{claudeNote}</p> : null}
       {!data && !error ? <EmptyState title="读取 AGENTS.md…" /> : null}
