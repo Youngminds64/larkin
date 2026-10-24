@@ -407,9 +407,11 @@ function dashboardMutation(value: Record<string, unknown>): ConfigMutation {
     "set-chat-mention": ["operation", "agentId", "chatId", "value"], "set-agent-runtime": ["operation", "agentId", "runtime", "model"],
     "set-agent-model": ["operation", "agentId", "model"], "set-agent-effort": ["operation", "agentId", "effort"],
     "set-global-inbox-audit": ["operation", "enabled", "intervalMs"], "set-agent-inbox-audit": ["operation", "agentId", "enabled", "intervalMs"],
+    "set-global-reply-mode": ["operation", "value"],
   };
   if (!allowed[operation] || Object.keys(value).some((key) => !allowed[operation].includes(key))) throw new Error("unsupported operation");
   if (operation === "set-global-mention") return { kind: operation, value: String(value.value) as "require" | "free" };
+  if (operation === "set-global-reply-mode") return { kind: operation, value: String(value.value) as "card" | "cli" };
   if (operation === "set-global-inbox-audit") {
     if (value.enabled !== undefined && typeof value.enabled !== "boolean") throw new Error("invalid inbox-audit enabled");
     if (value.intervalMs !== undefined && (typeof value.intervalMs !== "number" || !Number.isSafeInteger(value.intervalMs))) throw new Error("invalid inbox-audit interval");

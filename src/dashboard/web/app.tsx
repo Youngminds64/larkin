@@ -205,9 +205,13 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
   const [serverAudit, setServerAudit] = useState({ enabled: false, intervalMs: 15 * 60_000 });
   const [draftAudit, setDraftAudit] = useState({ enabled: false, intervalMs: 15 * 60_000 });
   const [draftAuditGapMinutes, setDraftAuditGapMinutes] = useState("15");
+  const [serverReplyMode, setServerReplyMode] = useState<"card" | "cli">("card");
+  const [draftReplyMode, setDraftReplyMode] = useState<"card" | "cli">("card");
+  const [agentIds, setAgentIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const dirty = draft !== serverValue || draftAudit.enabled !== serverAudit.enabled || draftAuditGapMinutes !== formatAuditGapMinutes(serverAudit.intervalMs);
+  const dirty = draft !== serverValue || draftReplyMode !== serverReplyMode
+    || draftAudit.enabled !== serverAudit.enabled || draftAuditGapMinutes !== formatAuditGapMinutes(serverAudit.intervalMs);
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
@@ -218,6 +222,9 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
       setServerAudit(value.inboxAudit);
       setDraftAudit(value.inboxAudit);
       setDraftAuditGapMinutes(formatAuditGapMinutes(value.inboxAudit.intervalMs));
+      setServerReplyMode(value.replyMode ?? "card");
+      setDraftReplyMode(value.replyMode ?? "card");
+      setAgentIds(value.agents.map((agent) => agent.agentId));
       setFeedback(null);
     }).catch((error) => { if (!controller.signal.aborted) setFeedback(error.message); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
@@ -239,6 +246,8 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
     try {
       let result: { revision: string; applyState: string } | null = null;
       if (draft !== serverValue) result = await mutateConfig({ operation: "set-global-mention", value: draft });
+      const replyModeChanged = draftReplyMode !== serverReplyMode;
+      if (replyModeChanged) result = await mutateConfig({ operation: "set-global-reply-mode", value: draftReplyMode });
       if (auditChanged) {
         result = await mutateConfig({
           operation: "set-global-inbox-audit",
@@ -247,10 +256,26 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
         });
       }
       setServerValue(draft);
+      setServerReplyMode(draftReplyMode);
       setServerAudit({ ...draftAudit, intervalMs });
       setDraftAudit((current) => ({ ...current, intervalMs }));
       setDraftAuditGapMinutes(formatAuditGapMinutes(intervalMs));
-      setFeedback(result ? `已保存 · ${result.applyState} · ${result.revision.slice(0, 20)}…` : "没有需要保存的修改");
+      // Reply mode is fixed per Runtime session, so each Agent re-applies; a busy Agent stays pending.
+      const unapplied: string[] = [];
+      if (replyModeChanged) {
+        for (const agentId of agentIds) {
+          try {
+            await jsonFetch("/api/config/apply", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-Larkin-CSRF": bootstrap.csrfCapability },
+              body: JSON.stringify({ agentId }),
+            });
+          } catch { unapplied.push(agentId); }
+        }
+      }
+      setFeedback(unapplied.length
+        ? `已保存；${unapplied.join("、")} 暂未应用（可能正忙），稍后在该 Agent 的配置页点「应用已保存配置」`
+        : result ? `已保存 · ${replyModeChanged ? "applied" : result.applyState} · ${result.revision.slice(0, 20)}…` : "没有需要保存的修改");
       onSaved();
     } catch (error) { setFeedback(error instanceof Error ? error.message : String(error)); }
     finally { setLoading(false); }
@@ -264,12 +289,19 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
         </select>
       </label>
       <p className="field-help">未单独设置的 Agent 和群会使用这个值。机器人消息仍必须精确 @ 当前 Agent。</p>
+      <label><span>回复方式</span>
+        <select aria-label="回复方式" value={draftReplyMode} onChange={(event) => setDraftReplyMode(event.target.value as "card" | "cli")} disabled={loading}>
+          <option value="card">流式卡片 · Larkin 把回复实时写进卡片</option>
+          <option value="cli">命令行回复 · Agent 自己用 lark-cli 发消息</option>
+        </select>
+      </label>
+      <p className="field-help">对所有 Agent 生效。保存后各 Agent 会依次重新加载（保留对话上下文）；正忙的 Agent 会保持待应用。</p>
       <div className="audit-controls" aria-labelledby="global-inbox-audit-title">
         <div className="audit-heading"><div><h3 id="global-inbox-audit-title">Inbox 巡检</h3><p>定时检查仍待处理的入站工作；关闭时不会安排巡检。</p></div><label className="audit-switch"><input aria-label="Inbox 巡检开关" type="checkbox" checked={draftAudit.enabled} disabled={loading} onChange={(event) => setDraftAudit((current) => ({ ...current, enabled: event.target.checked }))} /><span aria-hidden="true" /><b>{draftAudit.enabled ? "已开启" : "已关闭"}</b></label></div>
         <label><span>巡检间隔（分钟）</span><input aria-label="全局巡检间隔（分钟）" type="number" min={MIN_AUDIT_GAP_MINUTES} max={MAX_AUDIT_GAP_MINUTES} step="any" inputMode="decimal" value={draftAuditGapMinutes} disabled={loading} onChange={(event) => setDraftAuditGapMinutes(event.target.value)} /></label>
         <p className="field-help">可在关闭时预先调整；保存间隔本身不会开启巡检。</p>
       </div>
-      <div className="form-actions"><Button onClick={() => { setDraft(serverValue); setDraftAudit(serverAudit); setDraftAuditGapMinutes(formatAuditGapMinutes(serverAudit.intervalMs)); }} disabled={!dirty || loading}>放弃草稿</Button><Button className="primary" onClick={save} disabled={!dirty || loading}>{loading ? "保存中…" : "保存全局设置"}</Button></div>
+      <div className="form-actions"><Button onClick={() => { setDraft(serverValue); setDraftReplyMode(serverReplyMode); setDraftAudit(serverAudit); setDraftAuditGapMinutes(formatAuditGapMinutes(serverAudit.intervalMs)); }} disabled={!dirty || loading}>放弃草稿</Button><Button className="primary" onClick={save} disabled={!dirty || loading}>{loading ? "保存中…" : "保存全局设置"}</Button></div>
       {feedback ? <p role="status" className="feedback">{feedback}</p> : null}
     </div>
   </Sheet>;

@@ -84,6 +84,8 @@ export interface ContextPromptInput {
   runtime: RuntimeId;
   cli: AgentCliCapabilities;
   previousSession?: PreviousSessionRef | null;
+  /** Per-session override of the builder's default reply mode (configured globally in Larkin config). */
+  replyMode?: ReplyMode | null;
 }
 
 function clean(value: string): string {
@@ -99,12 +101,13 @@ export class ContextPromptBuilder {
   }
 
   build(input: { agentId: string; name?: string; description?: string; runtime: RuntimeId; cli?: AgentCliCapabilities;
-    previousSession?: PreviousSessionRef | null }): StandingPrompt {
+    previousSession?: PreviousSessionRef | null; replyMode?: ReplyMode | null }): StandingPrompt {
     return this.buildStandingPrompt({
       agent: { id: input.agentId, name: input.name, description: input.description },
       runtime: input.runtime,
       cli: input.cli ?? agentCliPromptCapabilities(),
       previousSession: input.previousSession ?? null,
+      replyMode: input.replyMode ?? null,
     });
   }
 
@@ -129,7 +132,7 @@ export class ContextPromptBuilder {
   }
 
   buildStandingPrompt(input: ContextPromptInput): StandingPrompt {
-    const cardMode = this.replyMode === "card";
+    const cardMode = (input.replyMode ?? this.replyMode) === "card";
     const identity = input.agent.name?.trim() || input.agent.id;
     const executable = clean(input.cli.executable);
     const command = (suffix: string): string => `${executable} ${suffix}`;

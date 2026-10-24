@@ -12,7 +12,8 @@
 // tool call, so the source is re-resolved after tool activity and at a bounded
 // interval; text written before any poll has no anchor and is not delivered.
 //
-// Set LARKIN_REPLY_MODE=cli to restore the legacy model-driven `+messages-reply`.
+// The mode is the global `replyMode` in Larkin config (dashboard 全局设置), else LARKIN_REPLY_MODE;
+// `cli` restores the legacy model-driven `+messages-reply`.
 
 import type { NormalizedRuntimeEvent } from "../runtime/runtime-contracts.js";
 
