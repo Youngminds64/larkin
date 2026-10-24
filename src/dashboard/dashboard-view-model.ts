@@ -16,6 +16,7 @@ import {
   createInstructionFile as createTypedInstructionFile,
   writeWorkspaceFile as writeTypedWorkspaceFile,
 } from "./dashboard-workspace.js";
+import { collectCapabilities as collectTypedCapabilities, defaultCapabilityHomes } from "./dashboard-capabilities.js";
 import { buildFingerprint, packageVersion } from "../platform/build-info.js";
 import * as larkinConfig from "../platform/config.js";
 import { toUserRuntime } from "../runtime/user-runtime.js";
@@ -473,6 +474,13 @@ export function createInstructionFile(body: Record<string, unknown>): unknown {
   if (Object.keys(body).some((key) => !allowed.has(key))) throw Object.assign(new Error("unsupported field"), { statusCode: 400 });
   const { config } = larkinConfig.loadConfig(process.env);
   return createTypedInstructionFile(config, String(body.agentId || ""), body.name, body.content);
+}
+
+export function collectCapabilities(agentId: string | null): unknown {
+  const { config } = larkinConfig.loadConfig(process.env);
+  const agent = Object.values(config.agents || {}).find((candidate) => candidate.agentId === agentId);
+  if (!agent) throw Object.assign(new Error("agent 不存在"), { statusCode: 404 });
+  return collectTypedCapabilities(config, agent.agentId, toUserRuntime(agent.runtime), defaultCapabilityHomes(process.env, os.homedir()));
 }
 
 export function resolveDashboardAvatarSource(agentId: string): string | null {
