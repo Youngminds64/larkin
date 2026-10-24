@@ -326,6 +326,34 @@ test("safe dynamic runtime models and runtime effort enums survive persistence r
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test("sandbox is a user-only Agent setting that defaults to danger-full-access and needs apply", () => {
+  const { root, file } = fixture();
+  const env = { LARKIN_CONFIG_DIR: root };
+  try {
+    assert.equal(configApi.loadConfig(env).config.agents[APP].sandbox, undefined);
+    assert.equal(configApi.safeConfigView(configApi.loadConfig(env).config, APP).agents[0].sandbox, "danger-full-access");
+    const signatureBefore = configApi.runtimeConfigSignature(configApi.loadConfig(env).config, APP);
+
+    const before = fs.readFileSync(file, "utf8");
+    assert.throws(() => configApi.mutateConfig(env, { kind: "set-agent-sandbox", agentId: APP, value: "workspace-write" },
+      { kind: "agent", agentId: APP }), /沙箱|Agent/);
+    assert.throws(() => configApi.mutateConfig(env, { kind: "set-agent-sandbox", agentId: APP, value: "read-only" },
+      { kind: "user" }), /sandbox/);
+    assert.equal(fs.readFileSync(file, "utf8"), before);
+
+    const result = configApi.mutateConfig(env, { kind: "set-agent-sandbox", agentId: APP, value: "workspace-write" }, { kind: "user" });
+    assert.equal(result.changedScope, "agent");
+    assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).agents[APP].sandbox, "workspace-write");
+    const reloaded = configApi.loadConfig(env).config;
+    assert.equal(reloaded.agents[APP].sandbox, "workspace-write");
+    assert.notEqual(configApi.runtimeConfigSignature(reloaded, APP), signatureBefore);
+
+    configApi.mutateConfig(env, { kind: "set-agent-sandbox", agentId: APP, value: "danger-full-access" }, { kind: "user" });
+    assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(file, "utf8")).agents[APP], "sandbox"), false);
+    assert.equal(configApi.runtimeConfigSignature(configApi.loadConfig(env).config, APP), signatureBefore);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("cross-process mutations serialize without losing either Agent update", async () => {
   const { root, file } = fixture();
   const script = `const config=require(process.argv[1]);config.mutateConfig({LARKIN_CONFIG_DIR:process.argv[2]},JSON.parse(process.argv[3]),{kind:"user"});`;

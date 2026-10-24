@@ -384,6 +384,7 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
         ? agent.inboxAudit.effective.intervalMs : agent.inboxAudit.override.intervalMs;
       const values = {
         runtime: agent.runtimeOption || agent.runtime, model: agent.model, effort: agent.effort || "default", mention: agent.mention.override,
+        sandbox: agent.sandbox || "danger-full-access",
         auditEnabled: agent.inboxAudit.override.enabled,
         auditIntervalInherited: agent.inboxAudit.override.intervalMs === "inherit",
         auditGapMinutes: formatAuditGapMinutes(intervalMs),
@@ -428,7 +429,9 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
     ? (models.some((item) => item.id === model) ? models : [{ id: model, label: `${model} · 当前配置` }, ...models])
     : [{ id: model, label: unavailableLabel }];
   const efforts = directoryReady && model !== "default" ? models.find((item) => item.id === model)?.supportedReasoningEfforts || [] : [];
-  const runtimeDirty = draft.runtime !== serverDraft.runtime || draft.model !== serverDraft.model || draft.effort !== serverDraft.effort;
+  const sandboxDirty = draft.sandbox !== serverDraft.sandbox;
+  // Sandbox is a Codex launch parameter, so it is applied the same way as a model change.
+  const runtimeDirty = draft.runtime !== serverDraft.runtime || draft.model !== serverDraft.model || draft.effort !== serverDraft.effort || sandboxDirty;
   const auditEnabled = draft.auditEnabled === "on" || draft.auditEnabled === "off" ? draft.auditEnabled : "inherit";
   const auditIntervalInherited = draft.auditIntervalInherited === true;
   const auditGapMinutes = String(draft.auditGapMinutes || "");
@@ -455,6 +458,7 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
       if (draft.runtime !== serverDraft.runtime) operations.push({ operation: "set-agent-runtime", agentId, runtime: draft.runtime, model: draft.model });
       else if (draft.model !== serverDraft.model) operations.push({ operation: "set-agent-model", agentId, model: draft.model });
       if (draft.effort !== serverDraft.effort) operations.push({ operation: "set-agent-effort", agentId, effort: draft.effort });
+      if (sandboxDirty) operations.push({ operation: "set-agent-sandbox", agentId, value: draft.sandbox });
       if (draft.mention !== serverDraft.mention) operations.push({ operation: "set-agent-mention", agentId, value: draft.mention });
       if (auditDirty) operations.push({
         operation: "set-agent-inbox-audit", agentId,
@@ -525,6 +529,18 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
   </div>;
   if (section === "advanced") return <div className="configuration-page">
     <section className="config-section">
+      <div className="audit-controls" aria-labelledby="agent-sandbox-title">
+        <div className="audit-heading"><div><h3 id="agent-sandbox-title">沙箱</h3><p>Agent 执行命令时能写哪些地方。审批固定为不询问，因为没人在旁边点确认。</p></div></div>
+        <div className="config-grid">
+          <label><span>模式</span><select aria-label="沙箱模式" value={String(draft.sandbox || "danger-full-access")} disabled={loading} onChange={(event) => update("sandbox", event.target.value)}><option value="danger-full-access">不限制（danger-full-access）</option><option value="workspace-write">只能写工作区（workspace-write）</option></select></label>
+        </div>
+        <p className="field-help">{runtime === "codex"
+          ? "只能写工作区时，Agent 还能联网、写自己的 Inbox 状态和飞书登录信息，但不能改 Larkin 配置，Inbox 巡检的完成回执也会写不进去。保存后自动应用。"
+          : `只对 Codex 生效。当前是 ${runtime}，这项保存了也不会改变它的行为。`}</p>
+      </div>
+      {sandboxDirty ? <>{actions}{status}</> : null}
+    </section>
+    <section className="config-section">
       <div className="audit-controls" aria-labelledby="agent-inbox-audit-title">
         <div className="audit-heading"><div><h3 id="agent-inbox-audit-title">Inbox 巡检</h3><p>{auditStateDescription}。</p></div></div>
         <div className="config-grid audit-grid">
@@ -534,7 +550,7 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
         <div className="audit-inline-actions"><span>{auditIntervalInherited ? "间隔跟随全局设置；编辑数字后会仅作用于此 Agent。" : "此 Agent 使用单独的巡检间隔。"}</span>{!auditIntervalInherited ? <Button disabled={loading} onClick={() => setDraft((current) => ({ ...current, auditIntervalInherited: true, auditGapMinutes: formatAuditGapMinutes(auditEffective.intervalMs) }))}>间隔跟随全局设置</Button> : null}</div>
         <p className="field-help">即使关闭巡检，也可保存间隔；间隔修改不会开启巡检。</p>
       </div>
-      {actions}{status}
+      {sandboxDirty ? null : <>{actions}{status}</>}
     </section>
   </div>;
   return <div className="configuration-page">

@@ -306,6 +306,35 @@ describe("Agent-centric dashboard workbench", () => {
     expect(screen.getByLabelText("Agent 巡检间隔（分钟）")).toHaveValue(30);
   });
 
+  it("saves the Codex sandbox from 高级 and applies it like a model change", async () => {
+    const mutations: Array<Record<string, unknown>> = [];
+    const applied: string[] = [];
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/status") return ok(status);
+      if (url.pathname === "/api/config" && init?.method === "PATCH") {
+        mutations.push(JSON.parse(String(init.body)));
+        return ok({ revision: "sha256:sandbox", applyState: "saved_not_applied" });
+      }
+      if (url.pathname === "/api/config/apply" && init?.method === "POST") {
+        applied.push(JSON.parse(String(init.body)).agentId);
+        return ok({ ok: true, applyState: "applied" });
+      }
+      if (url.pathname === "/api/config") return ok(config(url.searchParams.get("agent") || undefined));
+      if (url.pathname === "/api/models/codex") return ok({ models: [{ id: "default", label: "default" }] });
+      throw new Error(`unexpected request ${url}`);
+    }));
+    render(<App />);
+    await screen.findByRole("heading", { level: 1, name: "Builder" });
+    await userEvent.click(screen.getByRole("tab", { name: "高级" }));
+    const sandbox = await screen.findByLabelText("沙箱模式");
+    expect(sandbox).toHaveValue("danger-full-access");
+    await userEvent.selectOptions(sandbox, "workspace-write");
+    await userEvent.click(screen.getByRole("button", { name: "保存并应用" }));
+    await waitFor(() => expect(mutations).toEqual([{ operation: "set-agent-sandbox", agentId: "cli_AgentB2", value: "workspace-write" }]));
+    await waitFor(() => expect(applied).toEqual(["cli_AgentB2"]));
+  });
+
   it("filters the sidebar and preserves last-known status on polling errors", async () => {
     render(<App />);
     await screen.findByRole("heading", { level: 1, name: "Builder" });

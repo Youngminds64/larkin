@@ -28,6 +28,13 @@ export interface InboxAuditResolved {
   intervalMs: number;
 }
 
+export const AGENT_SANDBOXES = ["workspace-write", "danger-full-access"] as const;
+export type AgentSandbox = typeof AGENT_SANDBOXES[number];
+export const DEFAULT_AGENT_SANDBOX: AgentSandbox = "danger-full-access";
+function isAgentSandbox(value: unknown): value is AgentSandbox {
+  return typeof value === "string" && (AGENT_SANDBOXES as readonly string[]).includes(value);
+}
+
 export const DEFAULT_INBOX_AUDIT_INTERVAL_MS = 15 * 60_000;
 export const MIN_INBOX_AUDIT_INTERVAL_MS = 60_000;
 export const MAX_INBOX_AUDIT_INTERVAL_MS = 24 * 60 * 60_000;
@@ -36,6 +43,8 @@ export interface StoredAgent {
   runtime: string;
   model: string;
   effort?: string;
+  /** Codex sandbox. Absent means danger-full-access (the historical default). */
+  sandbox?: AgentSandbox;
   mentionPolicy?: MentionPolicy;
   chatMentionPolicies?: Record<string, MentionPolicy>;
   inboxAudit?: InboxAuditSettings;
@@ -81,7 +90,8 @@ export type ConfigMutation =
   | { kind: "set-global-reply-mode"; value: ReplyMode }
   | { kind: "set-agent-runtime"; agentId: string; runtime: string; model?: string }
   | { kind: "set-agent-model"; agentId: string; model: string }
-  | { kind: "set-agent-effort"; agentId: string; effort: string | null };
+  | { kind: "set-agent-effort"; agentId: string; effort: string | null }
+  | { kind: "set-agent-sandbox"; agentId: string; value: AgentSandbox };
 
 export type ConfigAuthority = { kind: "user" } | { kind: "agent"; agentId: string };
 export interface ConfigMutationResult {
@@ -101,7 +111,7 @@ const TOP_FIELDS_V3 = new Set(["version", "serverId", "activeAgent", "agents"]);
 const TOP_FIELDS_V4 = new Set(["version", "serverId", "mentionPolicy", "activeAgent", "agents"]);
 const OPTIONAL_TOP_FIELDS_V4 = new Set(["inboxAudit", "replyMode"]);
 const AGENT_FIELDS_V3 = new Set(["runtime", "model", "effort", "noMentionChats", "createdAt"]);
-const AGENT_FIELDS_V4 = new Set(["runtime", "model", "effort", "mentionPolicy", "chatMentionPolicies", "inboxAudit", "createdAt"]);
+const AGENT_FIELDS_V4 = new Set(["runtime", "model", "effort", "sandbox", "mentionPolicy", "chatMentionPolicies", "inboxAudit", "createdAt"]);
 const LEGACY_AGENT_FIELDS = new Set(["piDistribution", "runtimeOption", "processingEye"]);
 const INBOX_AUDIT_FIELDS = new Set(["enabled", "intervalMs"]);
 const APP_ID = /^cli_[A-Za-z0-9]+$/;
@@ -315,6 +325,7 @@ function validateStoredAgent(key: string, agent: unknown, version: 3 | 4): asser
   if (typeof agent.effort === "string") {
     if (!runtimeSupportsEffort(canonical.runtime, agent.effort)) throw new Error(`Agent ${key}.effort=${agent.effort} 不在 ${canonical.runtime} 安全档位中`);
   }
+  if (version === 4 && Object.hasOwn(agent, "sandbox") && !isAgentSandbox(agent.sandbox)) throw new Error(`Agent ${key}.sandbox 必须是 ${AGENT_SANDBOXES.join(" / ")}`);
   if (version === 3 && Object.hasOwn(agent, "noMentionChats")) {
     if (!Array.isArray(agent.noMentionChats) || agent.noMentionChats.some((chat) => typeof chat !== "string" || !CHAT_ID.test(chat))) {
       throw new Error(`Agent ${key}.noMentionChats 必须是安全的群 ID 字符串数组`);
@@ -345,6 +356,7 @@ function hydratedStoredAgent(key: string, agent: Obj, version: 3 | 4): StoredAge
     runtime: agent.runtime as string,
     model: agent.model as string,
     ...(typeof agent.effort === "string" ? { effort: agent.effort } : {}),
+    ...(version === 4 && isAgentSandbox(agent.sandbox) ? { sandbox: agent.sandbox } : {}),
     ...(version === 4 && (agent.mentionPolicy === "require" || agent.mentionPolicy === "free") ? { mentionPolicy: agent.mentionPolicy } : {}),
     ...(version === 4 && Object.hasOwn(agent, "inboxAudit") ? { inboxAudit: parseStoredInboxAudit(agent.inboxAudit, `Agent ${key}.inboxAudit`) } : {}),
     ...(Object.keys(chatMentionPolicies).length ? { chatMentionPolicies, noMentionChats: Object.entries(chatMentionPolicies).filter(([, policy]) => policy === "free").map(([chatId]) => chatId) } : {}),
@@ -360,6 +372,7 @@ export function hydrateAgent(key: string, agent: StoredAgent & { noMentionChats?
     workspaceDir: layout.workspaceDir(key), stateDir: layout.agentStateDir(key),
     larkConfigDir: path.join(layout.agentStateDir(key), "lark-cli-config"),
     ...(agent.effort ? { effort: agent.effort } : {}),
+    ...(agent.sandbox ? { sandbox: agent.sandbox } : {}),
     ...(agent.mentionPolicy ? { mentionPolicy: agent.mentionPolicy } : {}),
     ...(agent.inboxAudit ? { inboxAudit: { ...agent.inboxAudit } } : {}),
     ...(agent.chatMentionPolicies ? { chatMentionPolicies: { ...agent.chatMentionPolicies } } : {}),
@@ -601,6 +614,7 @@ export function toStored(config: HydratedConfig): {
   for (const [key, agent] of Object.entries(config.agents || {})) {
     const stored: StoredAgent = { runtime: agent.runtime, model: agent.model };
     if (typeof agent.effort === "string" && agent.effort) stored.effort = agent.effort;
+    if (agent.sandbox && agent.sandbox !== DEFAULT_AGENT_SANDBOX) stored.sandbox = agent.sandbox;
     if (agent.mentionPolicy) stored.mentionPolicy = agent.mentionPolicy;
     if (agent.chatMentionPolicies && Object.keys(agent.chatMentionPolicies).length) stored.chatMentionPolicies = { ...agent.chatMentionPolicies };
     if (agent.inboxAudit && (agent.inboxAudit.enabled !== undefined || agent.inboxAudit.intervalMs !== undefined)) {
@@ -666,6 +680,7 @@ function agentSignature(config: HydratedConfig, agentId: string): string {
     globalProcessingEye: null, agentProcessingEye: null,
     // Only present once configured, so upgrading does not mark every Agent pending apply.
     ...(config.replyMode ? { globalReplyMode: config.replyMode } : {}),
+    ...(agent.sandbox && agent.sandbox !== DEFAULT_AGENT_SANDBOX ? { sandbox: agent.sandbox } : {}),
   }));
 }
 
@@ -787,7 +802,8 @@ export function markConfigApplied(env: Env, agentId: string, expectedSignature: 
 function assertAuthority(authority: ConfigAuthority, mutation: ConfigMutation): void {
   if (authority.kind !== "user" && authority.kind !== "agent") throw new Error("配置 authority 无效");
   if (authority.kind === "agent" && !APP_ID.test(authority.agentId)) throw new Error("Runtime Agent authority 格式无效");
-  void mutation;
+  // An Agent must not be able to loosen its own sandbox; only the user may change it.
+  if (authority.kind === "agent" && mutation.kind === "set-agent-sandbox") throw new Error("沙箱只能由用户在 dashboard 或终端修改，Agent 不能自己改");
 }
 
 function applyMutation(config: HydratedConfig, mutation: ConfigMutation): { scope: "global" | "agent" | "chat"; agentId?: string; runtimeChange: boolean; affectedAgentIds: string[] } {
@@ -843,6 +859,11 @@ function applyMutation(config: HydratedConfig, mutation: ConfigMutation): { scop
     if (Object.keys(policies).length) agent.chatMentionPolicies = policies; else delete agent.chatMentionPolicies;
     agent.noMentionChats = Object.entries(policies).filter(([, value]) => value === "free").map(([chatId]) => chatId);
     return { scope: "chat", agentId: mutation.agentId, runtimeChange: false, affectedAgentIds: [mutation.agentId] };
+  }
+  if (mutation.kind === "set-agent-sandbox") {
+    if (!isAgentSandbox(mutation.value)) throw new Error(`sandbox 只能是 ${AGENT_SANDBOXES.join(" / ")}`);
+    if (mutation.value === DEFAULT_AGENT_SANDBOX) delete agent.sandbox; else agent.sandbox = mutation.value;
+    return { scope: "agent", agentId: mutation.agentId, runtimeChange: true, affectedAgentIds: [mutation.agentId] };
   }
   if (mutation.kind === "set-agent-runtime") {
     if (!isUserRuntime(mutation.runtime)) throw new Error(`未知 runtime：${mutation.runtime}`);
@@ -1222,6 +1243,7 @@ export function safeConfigView(config: HydratedConfig, onlyAgentId?: string, cha
   const entries = onlyAgentId ? [[onlyAgentId, config.agents[onlyAgentId]]] as const : Object.entries(config.agents);
   const agents = entries.filter((entry): entry is readonly [string, HydratedAgent] => Boolean(entry[1])).map(([agentId, agent]) => ({
     agentId, runtime: agent.runtime, runtimeOption: toUserRuntime(agent.runtime), model: agent.model, effort: agent.effort ?? null,
+    sandbox: agent.sandbox ?? DEFAULT_AGENT_SANDBOX,
     mention: {
       override: agent.mentionPolicy ?? "inherit",
       effective: agent.mentionPolicy ?? config.mentionPolicy,

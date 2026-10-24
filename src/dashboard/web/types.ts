@@ -106,6 +106,8 @@ export interface ConfigAgent {
   runtimeOption: "codex" | "claude" | "pi";
   model: string;
   effort: string | null;
+  /** Codex sandbox; other Runtimes ignore it. */
+  sandbox?: "workspace-write" | "danger-full-access";
   mention: { override: "inherit" | "require" | "free"; effective: "require" | "free"; source: "global" | "agent" };
   inboxAudit: {
     override: { enabled: "inherit" | "on" | "off"; intervalMs: "inherit" | number };

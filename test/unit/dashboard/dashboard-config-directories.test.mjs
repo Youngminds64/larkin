@@ -643,3 +643,21 @@ test("PATCH set-agent-runtime rejects builtin-pi as an unknown runtime", async (
   assert.match(response.body.error, /未知 runtime/);
   assert.equal(fs.readFileSync(path.join(f.root, "config.json"), "utf8"), before);
 });
+
+test("PATCH set-agent-sandbox saves the Codex sandbox and GET projects it", async () => {
+  const { createDashboardConfigController } = await import(`${CONTROLLER}?sandbox=${Date.now()}`);
+  const f = fixture();
+  onTestFinished(() => fs.rmSync(f.root, { recursive: true, force: true }));
+  const controller = createDashboardConfigController({ csrfCapability: "test", env: f.env, chatDirectoryResolver: { async resolve() { return {}; } } });
+  assert.equal((await get(controller, `/api/config?agent=${APP}`)).body.agents[0].sandbox, "danger-full-access");
+
+  const saved = await patch(controller, { operation: "set-agent-sandbox", agentId: APP, value: "workspace-write" });
+  assert.equal(saved.status, 200);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.root, "config.json"), "utf8")).agents[APP].sandbox, "workspace-write");
+  assert.equal((await get(controller, `/api/config?agent=${APP}`)).body.agents[0].sandbox, "workspace-write");
+
+  const before = fs.readFileSync(path.join(f.root, "config.json"), "utf8");
+  const rejected = await patch(controller, { operation: "set-agent-sandbox", agentId: APP, value: "read-only" });
+  assert.equal(rejected.status, 400);
+  assert.equal(fs.readFileSync(path.join(f.root, "config.json"), "utf8"), before);
+});

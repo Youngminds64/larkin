@@ -74,6 +74,8 @@ export interface RuntimeSessionCreate {
   standingPrompt: StandingPrompt;
   model?: string;
   reasoningEffort?: string | null;
+  /** Codex sandbox mode; null/absent keeps danger-full-access. */
+  sandbox?: string | null;
   resumeSessionId?: string | null;
   env?: NodeJS.ProcessEnv;
 }

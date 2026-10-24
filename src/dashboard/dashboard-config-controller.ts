@@ -2,7 +2,7 @@ import type http from "node:http";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { configApplyState, loadConfig, loadRuntimeModels, markConfigApplied, mutateConfig, resolveMentionPolicy, runtimeConfigSignature, safeConfigView, type ConfigMutation } from "../platform/config.js";
+import { configApplyState, loadConfig, loadRuntimeModels, markConfigApplied, mutateConfig, resolveMentionPolicy, runtimeConfigSignature, safeConfigView, type AgentSandbox, type ConfigMutation } from "../platform/config.js";
 import { requestAgentUpsert } from "../app/local-control.js";
 import { discoverClaudeModelCatalog, type DiscoverClaudeCatalogOptions } from "../runtime/claude-model-catalog.js";
 import { discoverCodexModelCatalog, type DiscoverCodexCatalogOptions } from "../runtime/codex-model-catalog.js";
@@ -407,7 +407,7 @@ function dashboardMutation(value: Record<string, unknown>): ConfigMutation {
     "set-chat-mention": ["operation", "agentId", "chatId", "value"], "set-agent-runtime": ["operation", "agentId", "runtime", "model"],
     "set-agent-model": ["operation", "agentId", "model"], "set-agent-effort": ["operation", "agentId", "effort"],
     "set-global-inbox-audit": ["operation", "enabled", "intervalMs"], "set-agent-inbox-audit": ["operation", "agentId", "enabled", "intervalMs"],
-    "set-global-reply-mode": ["operation", "value"],
+    "set-global-reply-mode": ["operation", "value"], "set-agent-sandbox": ["operation", "agentId", "value"],
   };
   if (!allowed[operation] || Object.keys(value).some((key) => !allowed[operation].includes(key))) throw new Error("unsupported operation");
   if (operation === "set-global-mention") return { kind: operation, value: String(value.value) as "require" | "free" };
@@ -426,6 +426,7 @@ function dashboardMutation(value: Record<string, unknown>): ConfigMutation {
   if (operation === "set-agent-mention") return { kind: operation, agentId, value: String(value.value) as "inherit" | "require" | "free" };
   if (operation === "set-chat-mention") return { kind: operation, agentId, chatId: String(value.chatId || ""), value: String(value.value) as "inherit" | "require" | "free" };
   if (operation === "set-agent-runtime") return { kind: operation, agentId, runtime: String(value.runtime || ""), ...(value.model ? { model: String(value.model) } : {}) };
+  if (operation === "set-agent-sandbox") return { kind: operation, agentId, value: String(value.value) as AgentSandbox };
   if (operation === "set-agent-model") return { kind: operation, agentId, model: String(value.model || "") };
   return { kind: "set-agent-effort", agentId, effort: value.effort === null || value.effort === "default" ? null : String(value.effort || "") };
 }
