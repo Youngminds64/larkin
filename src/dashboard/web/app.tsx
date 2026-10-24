@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, AlertTriangle, Bell, Bot, Check, ChevronRight, CircleDot, Clock3, File, Folder,
-  Gauge, Logs, Menu, MessageSquareText, RefreshCw, Search, Settings2, SlidersHorizontal, Users, XCircle,
+  Gauge, Logs, Menu, MessageSquareText, RefreshCw, ScrollText, Search, Settings2, SlidersHorizontal, Users, XCircle,
 } from "lucide-react";
 import { AGENT_TABS, createLatestResponseGate, filterAgents, parseRoute, reconcileAgentId, routeSearch, sameDraft, type AgentTab } from "./dashboard-state";
-import type { ConfigAgent, ConfigResponse, DashboardAgent, RuntimeModel, RuntimeReadinessView, StatusResponse, WorkspaceProjection } from "./types";
+import type { ConfigAgent, ConfigResponse, DashboardAgent, InstructionFilesResponse, RuntimeModel, RuntimeReadinessView, StatusResponse, WorkspaceProjection } from "./types";
 import { Badge, Button, EmptyState, Sheet, cn } from "./components/ui";
 import { RUNTIME_OPTIONS } from "../../runtime/user-runtime.js";
 
 const TAB_LABELS: Record<AgentTab, string> = {
-  overview: "概览", conversation: "对话", configuration: "配置", reminders: "提醒", workspace: "工作区", logs: "日志",
+  overview: "概览", conversation: "对话", configuration: "配置", rules: "设定", reminders: "提醒", workspace: "工作区", logs: "日志",
 };
 
 const bootstrap = window.__LARKIN_DASHBOARD__ || {
@@ -585,43 +585,29 @@ function Reminders({ agent }: { agent: DashboardAgent }) {
 
 const INSTRUCTION_FILES = new Set(["AGENTS.md", "CLAUDE.md"]);
 
-function Workspace({ agentId, onDirtyChange }: { agentId: string; onDirtyChange: (dirty: boolean) => void }) {
-  const [directory, setDirectory] = useState<Extract<WorkspaceProjection, { kind: "directory" }> | null>(null);
-  const [file, setFile] = useState<Extract<WorkspaceProjection, { kind: "file" }> | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+type WorkspaceFile = Extract<WorkspaceProjection, { kind: "file" }>;
+
+function TextFileEditor({ agentId, file, onSaved, onReload, onDirtyChange }: {
+  agentId: string;
+  file: WorkspaceFile;
+  onSaved: (file: WorkspaceFile) => void;
+  onReload: () => void;
+  onDirtyChange: (dirty: boolean) => void;
+}) {
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveFeedback, setSaveFeedback] = useState<{ tone: "success" | "error"; text: string; conflict?: boolean } | null>(null);
-  const gate = useRef(createLatestResponseGate());
-  const dirty = draft !== null && draft !== (file?.content ?? "");
+  const dirty = draft !== null && draft !== (file.content ?? "");
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
+  useEffect(() => { setDraft(null); }, [file.sha256]);
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => { if (dirty) event.preventDefault(); };
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, [dirty]);
-  const load = useCallback(async (requestedPath: string) => {
-    const token = gate.current.issue();
-    setLoading(true);
-    try {
-      const value = await jsonFetch<WorkspaceProjection>(`/api/workspace?agent=${encodeURIComponent(agentId)}&path=${encodeURIComponent(requestedPath)}`);
-      if (!gate.current.accepts(token)) return;
-      if (value.kind === "directory") { setDirectory(value); setFile(null); }
-      else setFile(value);
-      setDraft(null);
-      setSaveFeedback(null);
-      setError(null);
-    } catch (reason) { if (gate.current.accepts(token)) setError(reason instanceof Error ? reason.message : String(reason)); }
-    finally { if (gate.current.accepts(token)) setLoading(false); }
-  }, [agentId]);
-  useEffect(() => { void load(""); }, [load]);
-  const open = (requestedPath: string) => {
-    if (dirty && !window.confirm("文件改动尚未保存，确定放弃吗？")) return;
-    void load(requestedPath);
-  };
   const save = async () => {
-    if (!file || draft === null || !file.sha256 || saving) return;
+    if (draft === null || !file.sha256 || saving) return;
     setSaving(true);
     try {
       const saved = await jsonFetch<WorkspaceProjection>("/api/workspace/file", {
@@ -629,11 +615,11 @@ function Workspace({ agentId, onDirtyChange }: { agentId: string; onDirtyChange:
         headers: { "Content-Type": "application/json", "X-Larkin-CSRF": bootstrap.csrfCapability },
         body: JSON.stringify({ agentId, path: file.path, content: draft, expectedSha256: file.sha256 }),
       });
-      if (saved.kind === "file") setFile(saved);
       setDraft(null);
       setSaveFeedback({ tone: "success", text: INSTRUCTION_FILES.has(file.name)
         ? "已保存。Agent 会在下一次开启新会话时读取这份规则。"
         : "已保存。" });
+      if (saved.kind === "file") onSaved(saved);
     } catch (reason) {
       const conflict = reason instanceof JsonResponseError && /已被修改/.test(reason.message);
       setSaveFeedback({ tone: "error", conflict, text: conflict
@@ -642,9 +628,8 @@ function Workspace({ agentId, onDirtyChange }: { agentId: string; onDirtyChange:
     } finally { setSaving(false); }
   };
   const editing = draft !== null;
-  const parts = directory?.path.split("/").filter(Boolean) || [];
-  const editable = Boolean(file && !file.binary && !file.truncated && file.sha256);
-  const preview = file ? <>
+  const editable = Boolean(!file.binary && !file.truncated && file.sha256);
+  return <>
     <header>
       <strong>{file.name}{dirty ? <span className="dirty-dot" aria-label="未保存" title="未保存">●</span> : null}</strong>
       <div className="workspace-file-actions">
@@ -655,17 +640,116 @@ function Workspace({ agentId, onDirtyChange }: { agentId: string; onDirtyChange:
         </> : editable ? <Button onClick={() => { setDraft(file.content ?? ""); setSaveFeedback(null); }}>编辑</Button> : null}
       </div>
     </header>
-    {saveFeedback ? <p role="status" className={cn("workspace-feedback", saveFeedback.tone === "error" && "danger")}>{saveFeedback.text}{saveFeedback.conflict ? <Button onClick={() => { if (window.confirm("载入最新版本会丢弃你的草稿，确定吗？")) void load(file.path); }}>载入最新版本</Button> : null}</p> : null}
+    {saveFeedback ? <p role="status" className={cn("workspace-feedback", saveFeedback.tone === "error" && "danger")}>{saveFeedback.text}{saveFeedback.conflict ? <Button onClick={() => { if (window.confirm("载入最新版本会丢弃你的草稿，确定吗？")) { setSaveFeedback(null); onReload(); } }}>载入最新版本</Button> : null}</p> : null}
     {file.binary ? <EmptyState title="二进制文件不可预览" />
       : editing ? <textarea className="workspace-editor" aria-label={`编辑 ${file.name}`} value={draft ?? ""} spellCheck={false} disabled={saving}
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") { event.preventDefault(); void save(); } }} />
       : <pre>{file.content}</pre>}
-  </> : null;
+  </>;
+}
+
+function Workspace({ agentId, onDirtyChange }: { agentId: string; onDirtyChange: (dirty: boolean) => void }) {
+  const [directory, setDirectory] = useState<Extract<WorkspaceProjection, { kind: "directory" }> | null>(null);
+  const [file, setFile] = useState<WorkspaceFile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const gate = useRef(createLatestResponseGate());
+  useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
+  const load = useCallback(async (requestedPath: string) => {
+    const token = gate.current.issue();
+    setLoading(true);
+    try {
+      const value = await jsonFetch<WorkspaceProjection>(`/api/workspace?agent=${encodeURIComponent(agentId)}&path=${encodeURIComponent(requestedPath)}`);
+      if (!gate.current.accepts(token)) return;
+      if (value.kind === "directory") { setDirectory(value); setFile(null); }
+      else setFile(value);
+      setError(null);
+    } catch (reason) { if (gate.current.accepts(token)) setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { if (gate.current.accepts(token)) setLoading(false); }
+  }, [agentId]);
+  useEffect(() => { void load(""); }, [load]);
+  const open = (requestedPath: string) => {
+    if (dirty && !window.confirm("文件改动尚未保存，确定放弃吗？")) return;
+    void load(requestedPath);
+  };
+  const parts = directory?.path.split("/").filter(Boolean) || [];
   return <div className="workspace-browser">
     <div className="workspace-side"><nav className="breadcrumbs" aria-label="工作区路径"><button onClick={() => open("")}>workspace</button>{parts.map((part, index) => <span key={`${part}-${index}`}><ChevronRight size={12} /><button onClick={() => open(parts.slice(0, index + 1).join("/"))}>{part}</button></span>)}</nav><div className="workspace-list" role="region" aria-label="工作区目录">{directory?.entries.map((entry) => <button key={entry.path} onClick={() => open(entry.path)}>{entry.kind === "directory" ? <Folder size={15} /> : <File size={15} />}<span>{entry.name}</span><small>{entry.kind === "file" ? `${entry.size} B` : "目录"}</small></button>)}{!loading && directory && !directory.entries.length ? <EmptyState title="空目录" /> : null}</div></div>
-    <div className={cn("workspace-preview", editing && "editing")} role="region" aria-label="文件预览">{loading ? <EmptyState title="读取工作区…" /> : error ? <EmptyState title="工作区读取失败" detail={error} /> : file ? preview : <EmptyState title="未选择文件" detail="选择文件进行预览；文本文件可以点「编辑」修改" />}</div>
+    <div className={cn("workspace-preview", dirty && "editing")} role="region" aria-label="文件预览">{loading ? <EmptyState title="读取工作区…" /> : error ? <EmptyState title="工作区读取失败" detail={error} /> : file ? <TextFileEditor key={file.path} agentId={agentId} file={file} onSaved={setFile} onReload={() => void load(file.path)} onDirtyChange={setDirty} /> : <EmptyState title="未选择文件" detail="选择文件进行预览；文本文件可以点「编辑」修改" />}</div>
   </div>;
+}
+
+const RULE_FILE_READERS: Record<string, readonly string[]> = { "AGENTS.md": ["codex", "pi"], "CLAUDE.md": ["claude", "pi"] };
+const AGENTS_TEMPLATE = "# 角色\n\n（这个 Agent 是谁，替谁做事）\n\n# 说话方式\n\n（语气、篇幅、要不要用表情）\n\n# 工作习惯\n\n（遇到什么情况怎么做）\n\n# 不要做的事\n\n";
+const CLAUDE_IMPORTS_AGENTS = "@AGENTS.md\n";
+
+function AgentRules({ agent, onDirtyChange }: { agent: DashboardAgent; onDirtyChange: (dirty: boolean) => void }) {
+  const [data, setData] = useState<InstructionFilesResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [dirtyFiles, setDirtyFiles] = useState<Record<string, boolean>>({});
+  const gate = useRef(createLatestResponseGate());
+  const agentId = agent.agentId;
+  useEffect(() => onDirtyChange(Object.values(dirtyFiles).some(Boolean)), [dirtyFiles, onDirtyChange]);
+  const dirtyHandlers = useMemo(() => Object.fromEntries(["AGENTS.md", "CLAUDE.md"].map((name) => [name,
+    (dirty: boolean) => setDirtyFiles((current) => current[name] === dirty ? current : { ...current, [name]: dirty })])), []);
+  const load = useCallback(async () => {
+    const token = gate.current.issue();
+    try {
+      const value = await jsonFetch<InstructionFilesResponse>(`/api/agent-rules?agent=${encodeURIComponent(agentId)}`);
+      if (!gate.current.accepts(token)) return;
+      setData(value);
+      setError(null);
+    } catch (reason) { if (gate.current.accepts(token)) setError(reason instanceof Error ? reason.message : String(reason)); }
+  }, [agentId]);
+  useEffect(() => { void load(); }, [load]);
+  const create = async (name: string, content: string) => {
+    setCreating(true);
+    try {
+      await jsonFetch<WorkspaceProjection>("/api/agent-rules/file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Larkin-CSRF": bootstrap.csrfCapability },
+        body: JSON.stringify({ agentId, name, content }),
+      });
+    } catch (reason) { setError(`新建 ${name} 失败：${reason instanceof Error ? reason.message : String(reason)}`); }
+    finally { setCreating(false); }
+    await load();
+  };
+  const replaceFile = (name: string, file: WorkspaceFile) => setData((current) => current && {
+    files: current.files.map((view) => view.name === name ? { ...view, file } : view),
+  });
+  const primary = agent.runtime === "claude" ? "CLAUDE.md" : "AGENTS.md";
+  const files = [...(data?.files || [])].sort((left, right) => Number(right.name === primary) - Number(left.name === primary));
+  return <section className="rules-section">
+    <div className="section-heading"><div><h3>Agent 设定</h3><p>这里的内容会在每次开启新会话时交给 Agent，适合写它的角色、说话方式、工作习惯和不要做的事。当前 runtime 是 {agent.runtime}，读取 {agent.runtime === "pi" ? "AGENTS.md 和 CLAUDE.md" : primary}。改完从下一个新会话开始生效。</p></div></div>
+    {error ? <p role="alert" className="workspace-feedback danger">{error}</p> : null}
+    {!data && !error ? <EmptyState title="读取设定…" /> : null}
+    {files.map((view) => {
+      const reads = (RULE_FILE_READERS[view.name] || []).includes(agent.runtime);
+      return <article key={view.name} className="rule-file" aria-label={view.name}>
+        <div className="rule-file-meta">
+          <Badge className={reads ? "success" : ""}>{reads ? "当前 runtime 会读取" : "当前 runtime 不读取"}</Badge>
+          {view.linkedTo ? <Badge>链接到 {view.linkedTo}</Badge> : null}
+          {view.file?.content?.trim() === CLAUDE_IMPORTS_AGENTS.trim() ? <Badge>引用 AGENTS.md</Badge> : null}
+        </div>
+        {view.error ? <EmptyState title={`${view.name} 读取失败`} detail={view.error} />
+          : view.linkedTo && files.some((other) => other.name === view.linkedTo) ? <p className="rule-file-note">{view.name} 和 {view.linkedTo} 是同一个文件，在 {view.linkedTo} 里编辑即可。</p>
+          : view.file ? <div className="workspace-preview rule-file-editor"><TextFileEditor agentId={agentId} file={view.file} onSaved={(file) => replaceFile(view.name, file)} onReload={() => void load()} onDirtyChange={dirtyHandlers[view.name]} /></div>
+          : <div className="rule-file-missing">
+            <p><strong>{view.name}</strong> 还不存在。</p>
+            <div className="form-actions">
+              {view.name === "CLAUDE.md"
+                ? <Button className="primary" disabled={creating} onClick={() => void create(view.name, CLAUDE_IMPORTS_AGENTS)}>新建并引用 AGENTS.md</Button>
+                : <Button className="primary" disabled={creating} onClick={() => void create(view.name, AGENTS_TEMPLATE)}>用模板新建</Button>}
+              <Button disabled={creating} onClick={() => void create(view.name, "")}>新建空白文件</Button>
+            </div>
+            {view.name === "CLAUDE.md" ? <p className="rule-file-note">引用 AGENTS.md 后，换成 Claude runtime 也会沿用同一份规则，只需维护 AGENTS.md。</p> : null}
+          </div>}
+      </article>;
+    })}
+  </section>;
 }
 
 function LogsPanel({ agent }: { agent: DashboardAgent }) {
@@ -691,6 +775,7 @@ export function App() {
   const [configRefreshKey, setConfigRefreshKey] = useState(0);
   const [agentDirty, setAgentDirty] = useState(false);
   const [workspaceDirty, setWorkspaceDirty] = useState(false);
+  const [rulesDirty, setRulesDirty] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const scrollPositions = useRef(new Map<string, number>());
   const agents = polling.data?.agents || [];
@@ -720,8 +805,9 @@ export function App() {
   const allowContextChange = () => !agentDirty || window.confirm("Agent 配置尚未保存，确定放弃草稿吗？");
   const selectAgent = (agentId: string) => {
     if (!allowContextChange()) return;
-    if (workspaceDirty && !window.confirm("工作区文件改动尚未保存，确定放弃吗？")) return;
+    if ((workspaceDirty || rulesDirty) && !window.confirm("文件改动尚未保存，确定放弃吗？")) return;
     setWorkspaceDirty(false);
+    setRulesDirty(false);
     setAgentDirty(false);
     writeRoute(agentId, tab);
     setMobileOpen(false);
@@ -770,11 +856,12 @@ export function App() {
       {notice ? <div className="notice" role="status">{notice}<Button aria-label="关闭提示" onClick={() => setNotice(null)}>×</Button></div> : null}
       {polling.loading && !polling.data ? <div className="page-loading"><RefreshCw className="spin" />加载 Agent 工作台…</div> : !selected ? <EmptyState title="还没有配置任何 Agent" detail="先运行 larkin setup。" /> : <>
         <AgentHeader agent={selected} />
-        <nav className="agent-tabs" aria-label={`${selected.displayName} 内容页签`} role="tablist">{AGENT_TABS.map((item) => <button key={item} type="button" role="tab" aria-selected={tab === item} className={tab === item ? "active" : ""} onClick={() => selectTab(item)}>{item === "overview" ? <Gauge /> : item === "conversation" ? <MessageSquareText /> : item === "configuration" ? <SlidersHorizontal /> : item === "reminders" ? <Bell /> : item === "workspace" ? <Folder /> : <Logs />}{TAB_LABELS[item]}</button>)}</nav>
+        <nav className="agent-tabs" aria-label={`${selected.displayName} 内容页签`} role="tablist">{AGENT_TABS.map((item) => <button key={item} type="button" role="tab" aria-selected={tab === item} className={tab === item ? "active" : ""} onClick={() => selectTab(item)}>{item === "overview" ? <Gauge /> : item === "conversation" ? <MessageSquareText /> : item === "configuration" ? <SlidersHorizontal /> : item === "rules" ? <ScrollText /> : item === "reminders" ? <Bell /> : item === "workspace" ? <Folder /> : <Logs />}{TAB_LABELS[item]}</button>)}</nav>
         <div className={cn("agent-content", tab === "workspace" && "workspace-active")} key={selected.agentId}>
           <section role="tabpanel" hidden={tab !== "overview"}><Overview agent={selected} /></section>
           <section role="tabpanel" hidden={tab !== "conversation"}><Conversation agent={selected} /></section>
           <section role="tabpanel" hidden={tab !== "configuration"}><AgentConfiguration agentId={selected.agentId} readiness={selected.runtimeReadiness ?? null} onDirtyChange={setAgentDirty} refreshKey={configRefreshKey} /></section>
+          <section role="tabpanel" hidden={tab !== "rules"}><AgentRules agent={selected} onDirtyChange={setRulesDirty} /></section>
           <section role="tabpanel" hidden={tab !== "reminders"}><Reminders agent={selected} /></section>
           <section className="workspace-tab-panel" role="tabpanel" hidden={tab !== "workspace"}><Workspace agentId={selected.agentId} onDirtyChange={setWorkspaceDirty} /></section>
           <section role="tabpanel" hidden={tab !== "logs"}><LogsPanel agent={selected} /></section>
