@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, AlertTriangle, Bell, Bot, Check, ChevronRight, CircleDot, Clock3, File, Folder,
-  Gauge, Logs, Menu, MessageSquareText, RefreshCw, ScrollText, Search, Settings2, SlidersHorizontal, Users, XCircle,
+  Gauge, Menu, MessageSquareText, RefreshCw, ScrollText, Search, Settings2, SlidersHorizontal, Users, XCircle,
 } from "lucide-react";
 import { AGENT_TABS, createLatestResponseGate, filterAgents, parseRoute, reconcileAgentId, routeSearch, sameDraft, type AgentTab } from "./dashboard-state";
 import type { CapabilitiesResponse, CapabilityKind, ConfigAgent, ConfigResponse, DashboardAgent, InstructionFilesResponse, RuntimeModel, RuntimeReadinessView, StatusResponse, WorkspaceProjection } from "./types";
@@ -9,7 +9,7 @@ import { Badge, Button, EmptyState, Sheet, cn } from "./components/ui";
 import { RUNTIME_OPTIONS } from "../../runtime/user-runtime.js";
 
 const TAB_LABELS: Record<AgentTab, string> = {
-  overview: "概览", conversation: "对话", configuration: "配置", persona: "人设与能力", reminders: "提醒", workspace: "工作区", logs: "日志",
+  activity: "动态", persona: "设定", reply: "回复规则", advanced: "高级",
 };
 
 const bootstrap = window.__LARKIN_DASHBOARD__ || {
@@ -310,10 +310,14 @@ function formatReadiness(readiness: RuntimeReadinessView): string {
   ].filter(Boolean).join(" · ");
 }
 
-function AgentConfiguration({ agentId, readiness, onDirtyChange, refreshKey }: {
+function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSaved, refreshKey }: {
+  /** Which part of the Agent's settings this instance edits; each saves only the fields it shows. */
+  section: "model" | "reply" | "advanced";
   agentId: string;
   readiness: RuntimeReadinessView | null;
   onDirtyChange: (dirty: boolean) => void;
+  /** Lets the other half reload, since a save can change the shared apply state. */
+  onSaved: () => void;
   refreshKey: number;
 }) {
   const [response, setResponse] = useState<ConfigResponse | null>(null);
@@ -366,6 +370,7 @@ function AgentConfiguration({ agentId, readiness, onDirtyChange, refreshKey }: {
   const runtime = String(draft.runtime || config?.runtime || "");
   const model = String(draft.model || config?.model || "default");
   useEffect(() => {
+    if (section !== "model") return;
     setModelDirectory({ runtime, status: "loading", models: [] });
     if (!(RUNTIME_OPTIONS as readonly string[]).includes(runtime)) {
       setModelDirectory({ runtime, status: "error", models: [] });
@@ -382,7 +387,7 @@ function AgentConfiguration({ agentId, readiness, onDirtyChange, refreshKey }: {
         }
       });
     return () => controller.abort();
-  }, [agentId, runtime]);
+  }, [agentId, runtime, section]);
   const directoryReady = modelDirectory?.runtime === runtime && modelDirectory.status === "ready";
   const directoryStatus = modelDirectory?.runtime === runtime ? modelDirectory.status : "loading";
   const models = directoryReady ? modelDirectory.models : [];
@@ -438,6 +443,7 @@ function AgentConfiguration({ agentId, readiness, onDirtyChange, refreshKey }: {
         setFeedback(latest ? "配置已保存" : "没有需要保存的修改");
       }
       await load(false);
+      onSaved();
     } catch (error) { setFeedback(readinessFailure(error, error instanceof Error ? error.message : String(error))); }
     finally { setLoading(false); }
   };
@@ -447,6 +453,7 @@ function AgentConfiguration({ agentId, readiness, onDirtyChange, refreshKey }: {
       await requestApply();
       setFeedback("已应用保存的运行配置");
       await load(true);
+      onSaved();
     } catch (error) { setFeedback(`配置保持已保存但未应用：${readinessFailure(error, "稍后重试")}`); }
     finally { setLoading(false); }
   };
@@ -456,6 +463,7 @@ function AgentConfiguration({ agentId, readiness, onDirtyChange, refreshKey }: {
       const result = await mutateConfig({ operation: "set-chat-mention", agentId, chatId, value });
       setFeedback(`群策略已保存 · ${result.applyState}`);
       await load(true);
+      onSaved();
     } catch (error) { setFeedback(error instanceof Error ? error.message : String(error)); }
     finally { setLoading(false); }
   };
@@ -466,16 +474,25 @@ function AgentConfiguration({ agentId, readiness, onDirtyChange, refreshKey }: {
   const auditSource = config.inboxAudit.source;
   const auditStateDescription = `${auditSource.enabled === "agent" ? "当前 Agent 已单独设置" : auditSource.enabled === "global" ? "当前使用全局设置" : "当前使用默认设置"}：${auditEffective.enabled ? "已开启" : "已关闭"}，每 ${formatAuditGapMinutes(auditEffective.intervalMs)} 分钟`;
   const applyStateLabel = config.apply.applyState === "pending" ? "待应用" : config.apply.applyState === "applied" ? "已应用" : "状态未知";
-  return <div className="configuration-page">
-    <section className="config-section"><div className="section-heading"><div><h3>Agent 配置</h3><p>只作用于 {agentId}；运行配置会在安全时机自动应用，Agent 正忙时会保留待处理。</p></div><Badge className={config.apply.applyState === "pending" ? "warning" : "success"}>{applyStateLabel}</Badge></div>
-      <p className="cli-guidance">这里只提供常用微调。更多配置可以直接告诉当前 Agent，让它运行 <code>larkin config --help</code> 后完成。</p>
-      {readiness ? <p className="field-help">{formatReadiness(readiness)}</p> : null}
+  const actions = dirty || (section === "model" && config.apply.applyState === "pending") ? <div className="form-actions">
+    {dirty ? <Button disabled={loading} onClick={() => setDraft(serverDraft)}>放弃草稿</Button> : null}
+    {dirty
+      ? <Button className="primary" disabled={loading} onClick={save}>{loading ? "处理中…" : runtimeDirty ? "保存并应用" : "保存 Agent 配置"}</Button>
+      : <Button className="primary" disabled={loading} onClick={apply}><RefreshCw size={14} /> 应用已保存配置</Button>}
+  </div> : null;
+  const status = feedback ? <p role="status" className="feedback">{feedback}</p> : null;
+  if (section === "reply") return <div className="configuration-page">
+    <section className="config-section"><div className="section-heading"><div><h3>私聊</h3><p>私聊里的每条消息都会回复。</p></div></div></section>
+    <section className="config-section"><div className="section-heading"><div><h3>群聊</h3><p>群里什么时候回复。其他机器人发的消息，只有准确 @ {agentId} 才会回复。</p></div></div>
       <div className="config-grid">
-        <label><span>Runtime</span><select value={runtime} disabled={loading} onChange={(event) => { update("runtime", event.target.value); update("model", "default"); update("effort", "default"); }}>{(response?.runtimeOptions || RUNTIME_OPTIONS).map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
-        <label><span>Model</span><select value={model} disabled={loading || !directoryReady} onChange={(event) => { update("model", event.target.value); if (event.target.value === "default") update("effort", "default"); }}>{visibleModels.map((item) => <option value={item.id} key={item.id}>{item.label || item.id}</option>)}</select></label>
-        <label><span>Effort</span><select value={String(draft.effort || "default")} disabled={loading || !directoryReady || model === "default" || !efforts.length} onChange={(event) => update("effort", event.target.value)}><option value="default">default · 不指定</option>{efforts.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
-        <label><span>群消息策略</span><select value={String(draft.mention || "inherit")} disabled={loading} onChange={(event) => update("mention", event.target.value)}><option value="inherit">跟随全局设置</option><option value="require">需要 @</option><option value="free">无需 @</option></select></label>
+        <label><span>群消息策略</span><select value={String(draft.mention || "inherit")} disabled={loading} onChange={(event) => update("mention", event.target.value)}><option value="inherit">跟随全局设置（{config.mention.effective === "free" ? "无需 @" : "需要 @"}）</option><option value="require">需要 @</option><option value="free">无需 @</option></select></label>
       </div>
+      {actions}{status}
+    </section>
+    <GroupPolicyTable config={config} onSave={saveChat} disabled={loading} />
+  </div>;
+  if (section === "advanced") return <div className="configuration-page">
+    <section className="config-section">
       <div className="audit-controls" aria-labelledby="agent-inbox-audit-title">
         <div className="audit-heading"><div><h3 id="agent-inbox-audit-title">Inbox 巡检</h3><p>{auditStateDescription}。</p></div></div>
         <div className="config-grid audit-grid">
@@ -485,19 +502,24 @@ function AgentConfiguration({ agentId, readiness, onDirtyChange, refreshKey }: {
         <div className="audit-inline-actions"><span>{auditIntervalInherited ? "间隔跟随全局设置；编辑数字后会仅作用于此 Agent。" : "此 Agent 使用单独的巡检间隔。"}</span>{!auditIntervalInherited ? <Button disabled={loading} onClick={() => setDraft((current) => ({ ...current, auditIntervalInherited: true, auditGapMinutes: formatAuditGapMinutes(auditEffective.intervalMs) }))}>间隔跟随全局设置</Button> : null}</div>
         <p className="field-help">即使关闭巡检，也可保存间隔；间隔修改不会开启巡检。</p>
       </div>
-      {dirty || config.apply.applyState === "pending" ? <div className="form-actions">
-        {dirty ? <Button disabled={loading} onClick={() => setDraft(serverDraft)}>放弃草稿</Button> : null}
-        {dirty
-          ? <Button className="primary" disabled={loading} onClick={save}>{loading ? "处理中…" : runtimeDirty ? "保存并应用" : "保存 Agent 配置"}</Button>
-          : <Button className="primary" disabled={loading} onClick={apply}><RefreshCw size={14} /> 应用已保存配置</Button>}
-      </div> : null}
-      {feedback ? <p role="status" className="feedback">{feedback}</p> : null}
+      {actions}{status}
     </section>
-    <GroupPolicyTable config={config} onSave={saveChat} disabled={loading} />
+  </div>;
+  return <div className="configuration-page">
+    <section className="config-section"><div className="section-heading"><div><h3>模型</h3><p>这个 Agent 用哪个 Runtime 和模型。保存后自动应用，Agent 正忙时会等它空下来再切换。</p></div><Badge className={config.apply.applyState === "pending" ? "warning" : "success"}>{applyStateLabel}</Badge></div>
+      <p className="cli-guidance">更多选项可以让 Agent 运行 <code>larkin config --help</code> 自己改。</p>
+      {readiness ? <p className="field-help">{formatReadiness(readiness)}</p> : null}
+      <div className="config-grid">
+        <label><span>Runtime</span><select value={runtime} disabled={loading} onChange={(event) => { update("runtime", event.target.value); update("model", "default"); update("effort", "default"); }}>{(response?.runtimeOptions || RUNTIME_OPTIONS).map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
+        <label><span>Model</span><select value={model} disabled={loading || !directoryReady} onChange={(event) => { update("model", event.target.value); if (event.target.value === "default") update("effort", "default"); }}>{visibleModels.map((item) => <option value={item.id} key={item.id}>{item.label || item.id}</option>)}</select></label>
+        <label><span>Effort</span><select value={String(draft.effort || "default")} disabled={loading || !directoryReady || model === "default" || !efforts.length} onChange={(event) => update("effort", event.target.value)}><option value="default">default · 不指定</option>{efforts.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
+      </div>
+      {actions}{status}
+    </section>
   </div>;
 }
 
-function Overview({ agent }: { agent: DashboardAgent }) {
+function ActivityPanel({ agent }: { agent: DashboardAgent }) {
   const usage = agent.session?.usage || {};
   const compaction = agent.session?.compaction || {};
   return <div className="overview-page">
@@ -511,10 +533,14 @@ function Overview({ agent }: { agent: DashboardAgent }) {
       <section className="metric-stat"><div className="metric-icon"><RefreshCw /></div><span>Compaction</span><strong>{formatNumber(compaction.count)}</strong><small>{compaction.active ? "正在压缩上下文" : compaction.lastFinishedAt ? `最近 ${formatDate(compaction.lastFinishedAt)}` : "尚无压缩记录"}</small></section>
     </div>
     <div className="overview-sections">
-      <section className="content-section wide"><div className="section-heading"><div><h3>最近动态</h3><p>当前 Agent 的消息、工具和状态转换。</p></div><Badge>{agent.feed.length}</Badge></div><Timeline items={agent.feed.slice(0, 10)} /></section>
-      <section className="content-section"><h3>运行摘要</h3><dl className="facts"><div><dt>Runtime</dt><dd>{agent.runtime}</dd></div><div><dt>Readiness</dt><dd>{agent.runtimeReadiness ? `${agent.runtimeReadiness.state}${agent.runtimeReadiness.version ? ` · ${agent.runtimeReadiness.version}` : ""}${agent.runtimeReadiness.executable ? ` · ${agent.runtimeReadiness.executable}` : ""}${agent.runtimeReadiness.reason ? ` · ${agent.runtimeReadiness.reason}` : ""}${agent.runtimeReadiness.nextAction ? ` · ${agent.runtimeReadiness.nextAction}` : ""}` : "unknown"}</dd></div><div><dt>Model</dt><dd>{agent.model}</dd></div><div><dt>Effort</dt><dd>{agent.effort || "default"}</dd></div><div><dt>入站</dt><dd>{agent.inbound.state}</dd></div><div><dt>提醒</dt><dd>{agent.activeReminders}</dd></div><div><dt>指示灯</dt><dd>{agent.eyeIndicator.stuck ? "疑似卡住" : `${agent.eyeIndicator.pendingCount} pending`}</dd></div></dl></section>
+      <section className="content-section wide"><div className="section-heading"><div><h3>最近对话</h3><p>谁找了它、它回了什么。</p></div><Badge>{agent.conversation.length}</Badge></div><Conversation agent={agent} /></section>
+      <section className="content-section"><div className="section-heading"><div><h3>提醒</h3><p>在聊天里让它记下的提醒。</p></div><Badge>{agent.activeReminders}</Badge></div><Reminders agent={agent} /></section>
     </div>
   </div>;
+}
+
+function RuntimeSummary({ agent }: { agent: DashboardAgent }) {
+  return <section className="content-section runtime-summary"><h3>运行摘要</h3><dl className="facts"><div><dt>Runtime</dt><dd>{agent.runtime}</dd></div><div><dt>Readiness</dt><dd>{agent.runtimeReadiness ? `${agent.runtimeReadiness.state}${agent.runtimeReadiness.version ? ` · ${agent.runtimeReadiness.version}` : ""}${agent.runtimeReadiness.executable ? ` · ${agent.runtimeReadiness.executable}` : ""}${agent.runtimeReadiness.reason ? ` · ${agent.runtimeReadiness.reason}` : ""}${agent.runtimeReadiness.nextAction ? ` · ${agent.runtimeReadiness.nextAction}` : ""}` : "unknown"}</dd></div><div><dt>Model</dt><dd>{agent.model}</dd></div><div><dt>Effort</dt><dd>{agent.effort || "default"}</dd></div><div><dt>入站</dt><dd>{agent.inbound.state}</dd></div><div><dt>提醒</dt><dd>{agent.activeReminders}</dd></div><div><dt>指示灯</dt><dd>{agent.eyeIndicator.stuck ? "疑似卡住" : `${agent.eyeIndicator.pendingCount} pending`}</dd></div></dl></section>;
 }
 
 function Timeline({ items }: { items: DashboardAgent["feed"] }) {
@@ -702,16 +728,17 @@ function AgentPersona({ agent, onDirtyChange }: { agent: DashboardAgent; onDirty
     : agentsView?.file ? <>当前是 Claude runtime，还没有 CLAUDE.md，这份设定不会被读取。<Button disabled={creating} onClick={() => void createFiles([{ name: "CLAUDE.md", content: CLAUDE_IMPORTS_AGENTS }])}>新建 CLAUDE.md 并引用 AGENTS.md</Button></>
     : null;
   const [view, setView] = useState<"agents" | CapabilityKind>("agents");
-  const capabilities = useCapabilities(agentId);
+  // Runtime decides which folders hold the capabilities, so reload them when it changes.
+  const capabilities = useCapabilities(agentId, agent.runtime);
   const countOf = (kind: CapabilityKind) => capabilities.data?.items.filter((item) => item.kind === kind).length;
   return <section className="persona-section">
-    <div className="persona-switch" role="group" aria-label="人设与能力分类">
+    <div className="persona-switch" role="group" aria-label="设定分类">
       {(["agents", ...CAPABILITY_KINDS] as const).map((item) => <button key={item} type="button" aria-pressed={view === item} className={view === item ? "active" : ""} onClick={() => setView(item)}>
         {item === "agents" ? "AGENTS.md" : CAPABILITY_LABELS[item]}{item !== "agents" && countOf(item) !== undefined && !capabilities.data?.unsupported.includes(item) ? <small>{countOf(item)}</small> : null}
       </button>)}
     </div>
     <div hidden={view !== "agents"}>
-      <div className="section-heading"><div><h3>人设与规则</h3><p>新会话开始时读取。Codex、Pi 直接读 AGENTS.md，Claude 通过 CLAUDE.md 里的 <code>@AGENTS.md</code> 引用。改完从下一个新会话开始生效。</p></div></div>
+      <p className="field-help">新会话开始时读取，改完从下一个新会话生效。Claude 通过 CLAUDE.md 里的 <code>@AGENTS.md</code> 读到它。</p>
       {error ? <p role="alert" className="workspace-feedback danger">{error}</p> : null}
       {claudeNote ? <p className="persona-note">{claudeNote}</p> : null}
       {!data && !error ? <EmptyState title="读取 AGENTS.md…" /> : null}
@@ -748,7 +775,7 @@ const CAPABILITY_STATUS: Record<CapabilityItem["status"], { label: string; class
   shadowed: { label: "被覆盖", className: "" },
 };
 
-function useCapabilities(agentId: string) {
+function useCapabilities(agentId: string, runtime: string) {
   const [data, setData] = useState<CapabilitiesResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const gate = useRef(createLatestResponseGate());
@@ -761,7 +788,7 @@ function useCapabilities(agentId: string) {
       setError(null);
     } catch (reason) { if (gate.current.accepts(token)) setError(reason instanceof Error ? reason.message : String(reason)); }
   }, [agentId]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); }, [load, runtime]);
   return { data, error, reload: load };
 }
 
@@ -824,7 +851,11 @@ export function App() {
   const [globalOpen, setGlobalOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [configRefreshKey, setConfigRefreshKey] = useState(0);
-  const [agentDirty, setAgentDirty] = useState(false);
+  const refreshConfig = useCallback(() => setConfigRefreshKey((value) => value + 1), []);
+  const [replyDirty, setReplyDirty] = useState(false);
+  const [modelDirty, setModelDirty] = useState(false);
+  const [advancedDirty, setAdvancedDirty] = useState(false);
+  const agentDirty = modelDirty || replyDirty || advancedDirty;
   const [workspaceDirty, setWorkspaceDirty] = useState(false);
   const [personaDirty, setPersonaDirty] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -859,15 +890,14 @@ export function App() {
     if ((workspaceDirty || personaDirty) && !window.confirm("文件改动尚未保存，确定放弃吗？")) return;
     setWorkspaceDirty(false);
     setPersonaDirty(false);
-    setAgentDirty(false);
+    setModelDirty(false);
+    setReplyDirty(false);
+    setAdvancedDirty(false);
     writeRoute(agentId, tab);
     setMobileOpen(false);
   };
-  const selectTab = (next: AgentTab) => {
-    if (next !== "configuration" && !allowContextChange()) return;
-    if (next !== "configuration") setAgentDirty(false);
-    writeRoute(selectedId, next);
-  };
+  // Every tab stays mounted, so drafts survive switching tabs; only leaving the Agent asks first.
+  const selectTab = (next: AgentTab) => writeRoute(selectedId, next);
 
   useEffect(() => {
     if (!polling.data) return;
@@ -885,7 +915,9 @@ export function App() {
         return;
       }
       if (selectedId) saveScroll(selectedId, tab);
-      setAgentDirty(false);
+      setModelDirty(false);
+      setReplyDirty(false);
+      setAdvancedDirty(false);
       setSelectedId(next.agentId);
       setTab(next.tab);
     };
@@ -899,27 +931,32 @@ export function App() {
     if (window.scrollY !== top) window.scrollTo({ top, behavior: "auto" });
   }, [savedScroll, selectedId, tab]);
 
-  return <div className={cn("app-shell", tab === "workspace" && "workspace-app-active")}>
+  return <div className="app-shell">
     <aside className="desktop-sidebar"><div className="brand"><img src="/assets/larkin-mark.svg" alt="" /><strong>Larkin <span className="brand-version">v{packageVersion}</span></strong></div><AgentSidebar agents={agents} selectedId={selectedId} onSelect={selectAgent} /><footer>{polling.data?.daemon.running ? `${agents.length} Agents · daemon online` : "daemon offline"}</footer></aside>
-    <main className={cn("workspace-shell", tab === "workspace" && "workspace-route-active")}>
+    <main className="workspace-shell">
       <div className="app-topbar"><Button className="mobile-menu" aria-label="打开 Agent 导航" onClick={() => setMobileOpen(true)}><Menu size={18} /></Button><div><strong>Larkin <span className="brand-version">v{packageVersion}</span></strong><span>{polling.data?.daemon.running ? "运行中" : "未运行"}</span>{polling.stale ? <Badge className="warning">状态陈旧</Badge> : null}</div><Button onClick={() => setGlobalOpen(true)}><Settings2 size={15} /> 全局设置</Button></div>
       {polling.error ? <div className="stale-banner" role="alert"><AlertTriangle size={15} />状态刷新失败，保留最后一次数据：{polling.error}<Button onClick={() => void polling.retry()}>重试</Button></div> : null}
       {notice ? <div className="notice" role="status">{notice}<Button aria-label="关闭提示" onClick={() => setNotice(null)}>×</Button></div> : null}
       {polling.loading && !polling.data ? <div className="page-loading"><RefreshCw className="spin" />加载 Agent 工作台…</div> : !selected ? <EmptyState title="还没有配置任何 Agent" detail="先运行 larkin setup。" /> : <>
         <AgentHeader agent={selected} />
-        <nav className="agent-tabs" aria-label={`${selected.displayName} 内容页签`} role="tablist">{AGENT_TABS.map((item) => <button key={item} type="button" role="tab" aria-selected={tab === item} className={tab === item ? "active" : ""} onClick={() => selectTab(item)}>{item === "overview" ? <Gauge /> : item === "conversation" ? <MessageSquareText /> : item === "configuration" ? <SlidersHorizontal /> : item === "persona" ? <ScrollText /> : item === "reminders" ? <Bell /> : item === "workspace" ? <Folder /> : <Logs />}{TAB_LABELS[item]}</button>)}</nav>
-        <div className={cn("agent-content", tab === "workspace" && "workspace-active")} key={selected.agentId}>
-          <section role="tabpanel" hidden={tab !== "overview"}><Overview agent={selected} /></section>
-          <section role="tabpanel" hidden={tab !== "conversation"}><Conversation agent={selected} /></section>
-          <section role="tabpanel" hidden={tab !== "configuration"}><AgentConfiguration agentId={selected.agentId} readiness={selected.runtimeReadiness ?? null} onDirtyChange={setAgentDirty} refreshKey={configRefreshKey} /></section>
-          <section role="tabpanel" hidden={tab !== "persona"}><AgentPersona agent={selected} onDirtyChange={setPersonaDirty} /></section>
-          <section role="tabpanel" hidden={tab !== "reminders"}><Reminders agent={selected} /></section>
-          <section className="workspace-tab-panel" role="tabpanel" hidden={tab !== "workspace"}><Workspace agentId={selected.agentId} onDirtyChange={setWorkspaceDirty} /></section>
-          <section role="tabpanel" hidden={tab !== "logs"}><LogsPanel agent={selected} /></section>
+        <nav className="agent-tabs" aria-label={`${selected.displayName} 内容页签`} role="tablist">{AGENT_TABS.map((item) => <button key={item} type="button" role="tab" aria-selected={tab === item} className={tab === item ? "active" : ""} onClick={() => selectTab(item)}>{item === "activity" ? <Activity /> : item === "persona" ? <ScrollText /> : item === "reply" ? <MessageSquareText /> : <SlidersHorizontal />}{TAB_LABELS[item]}</button>)}</nav>
+        <div className="agent-content" key={selected.agentId}>
+          <section role="tabpanel" hidden={tab !== "activity"}><ActivityPanel agent={selected} /></section>
+          <section role="tabpanel" hidden={tab !== "persona"}><div className="runtime-page">
+            <AgentConfiguration section="model" agentId={selected.agentId} readiness={selected.runtimeReadiness ?? null} onDirtyChange={setModelDirty} onSaved={refreshConfig} refreshKey={configRefreshKey} />
+            <AgentPersona agent={selected} onDirtyChange={setPersonaDirty} />
+          </div></section>
+          <section role="tabpanel" hidden={tab !== "reply"}><AgentConfiguration section="reply" agentId={selected.agentId} readiness={null} onDirtyChange={setReplyDirty} onSaved={refreshConfig} refreshKey={configRefreshKey} /></section>
+          <section role="tabpanel" hidden={tab !== "advanced"}><div className="runtime-page">
+            <AgentConfiguration section="advanced" agentId={selected.agentId} readiness={null} onDirtyChange={setAdvancedDirty} onSaved={refreshConfig} refreshKey={configRefreshKey} />
+            <RuntimeSummary agent={selected} />
+            <details className="runtime-details"><summary><ChevronRight size={16} aria-hidden="true" />工作区文件 <small>查看和编辑这个 Agent 工作区里的文本文件</small></summary><Workspace agentId={selected.agentId} onDirtyChange={setWorkspaceDirty} /></details>
+            <details className="runtime-details"><summary><ChevronRight size={16} aria-hidden="true" />运行日志 <small>{selected.recentErrors.length ? `最近 ${selected.recentErrors.length} 个错误` : "排查问题时用"}</small></summary><LogsPanel agent={selected} /></details>
+          </div></section>
         </div>
       </>}
     </main>
-    <GlobalSettingsSheet open={globalOpen} onOpenChange={setGlobalOpen} onSaved={() => setConfigRefreshKey((value) => value + 1)} />
+    <GlobalSettingsSheet open={globalOpen} onOpenChange={setGlobalOpen} onSaved={refreshConfig} />
     <Sheet open={mobileOpen} onOpenChange={setMobileOpen} title="选择 Agent" description="搜索、查看状态并切换当前工作区。"><AgentSidebar compact agents={agents} selectedId={selectedId} onSelect={selectAgent} /></Sheet>
   </div>;
 }
