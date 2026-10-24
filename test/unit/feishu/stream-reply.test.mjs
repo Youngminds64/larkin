@@ -85,14 +85,14 @@ test("each turn with reply text logs a diagnostic summary, flagging text that ha
   send({ type: "turn-start" });
   send({ type: "text-delta", text: "没有领取消息就写的回复", newBlock: true });
   send({ type: "turn-end" });
-  assert.match(logs.at(-1), /流式回复回合结束 agent=agent-1 text=11 cards=0（有回复文字但本回合没有领取到消息，文字未发送）/);
+  assert.match(logs.at(-1), /流式回复回合结束 agent=agent-1 text=11 cards=0 tools=0 source=none（有回复文字但本回合没有领取到消息，文字未发送）/);
 
   state.source = { deliveryTarget: "chat:oc_room", deliveryAnchor: "om_user" };
   send({ type: "turn-start" });
   send({ type: "text-delta", text: "你好", newBlock: true });
   send({ type: "turn-end" });
   await coordinator.idle();
-  assert.ok(logs.includes("流式回复回合结束 agent=agent-1 text=2 cards=1"));
+  assert.ok(logs.includes("流式回复回合结束 agent=agent-1 text=2 cards=1 tools=0 source=chat:oc_room#om_user"));
   assert.ok(logs.includes("流式卡片已发送 anchor=om_user message=om_card_1 chars=2"));
 
   const before = logs.length;

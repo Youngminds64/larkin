@@ -138,6 +138,9 @@ interface TurnState {
   /** Diagnostics: assistant text seen this turn and cards opened for it. */
   textChars: number;
   cards: number;
+  tools: number;
+  /** Last Inbox source read for this turn, raw, so a non-card source is visible in the summary. */
+  source: string;
 }
 
 export class StreamReplyCoordinator {
@@ -171,6 +174,7 @@ export class StreamReplyCoordinator {
     if (!turn) return;
     if (event.type === "activity" && event.activity === "tool") {
       turn.needsResolve = true;
+      turn.tools += 1;
       if (turn.card?.text) turn.pendingBreak = true;
       return;
     }
@@ -187,7 +191,7 @@ export class StreamReplyCoordinator {
   }
 
   private freshTurn(): TurnState {
-    return { card: null, needsResolve: true, lastResolveAt: 0, pendingBreak: false, lastAddress: null, failed: null, textChars: 0, cards: 0 };
+    return { card: null, needsResolve: true, lastResolveAt: 0, pendingBreak: false, lastAddress: null, failed: null, textChars: 0, cards: 0, tools: 0, source: "none" };
   }
 
   private onText(agentId: string, turn: TurnState, text: string, newBlock: boolean): void {
@@ -220,6 +224,7 @@ export class StreamReplyCoordinator {
     try { source = this.options.resolveSource(agentId); }
     catch (error) { this.log(`读取当前 Inbox source 失败 agent=${agentId}: ${error instanceof Error ? error.message : String(error)}`); }
     const address = replyAddressOf(source);
+    turn.source = source ? `${source.deliveryTarget}#${source.deliveryAnchor}` : "none";
     if (address) turn.lastAddress = address;
     return address;
   }
@@ -238,7 +243,7 @@ export class StreamReplyCoordinator {
     if (!turn) return;
     this.turns.delete(agentId);
     if (turn.textChars || turn.failed) {
-      this.log(`流式回复回合结束 agent=${agentId} text=${turn.textChars} cards=${turn.cards}${turn.failed ? " failed" : ""}`
+      this.log(`流式回复回合结束 agent=${agentId} text=${turn.textChars} cards=${turn.cards} tools=${turn.tools} source=${turn.source}${turn.failed ? " failed" : ""}`
         + (turn.textChars && !turn.cards ? "（有回复文字但本回合没有领取到消息，文字未发送）" : ""));
     }
     if (!turn.failed) { turn.card?.finish(); return; }
