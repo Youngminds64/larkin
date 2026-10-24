@@ -131,9 +131,9 @@ describe("Agent-centric dashboard workbench", () => {
     expect(container.querySelector(".app-topbar strong")).toHaveTextContent(/^Larkin v0\.2\.20$/);
     expect(screen.getByRole("tab", { name: "人设与能力" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByText("Agent workbench")).not.toBeInTheDocument();
-    const guidance = await screen.findByText(/这里只提供常用微调/);
+    const guidance = await screen.findByText(/更多选项可以让 Agent 运行/);
     expect(guidance).toBeVisible();
-    expect(guidance).toHaveTextContent(/当前 Agent.*larkin config --help/);
+    expect(guidance).toHaveTextContent(/让 Agent 运行 larkin config --help 自己改/);
   });
 
   it("renders only explicit group policies without implementation-oriented precedence terminology", async () => {
