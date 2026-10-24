@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { TargetRootLayout } from "../platform/root-layout.js";
@@ -33,7 +34,11 @@ export type WorkspaceProjection = {
   binary: boolean;
   truncated: boolean;
   content: string | null;
+  /** Hash of the whole file when it is fully previewed text; the edit precondition. */
+  sha256: string | null;
 };
+
+export const MAX_WORKSPACE_EDIT_BYTES = 1024 * 1024;
 
 export interface SafeWorkspacePath {
   root: string;
@@ -128,6 +133,7 @@ export function collectWorkspaceEntry(
   try { fs.readSync(fd, buffer, 0, readBytes, 0); }
   finally { fs.closeSync(fd); }
   const binary = buffer.includes(0);
+  const truncated = stat.size > readBytes;
   return {
     kind: "file",
     path: rel,
@@ -135,7 +141,49 @@ export function collectWorkspaceEntry(
     size: stat.size,
     modifiedAt: stat.mtime.toISOString(),
     binary,
-    truncated: stat.size > readBytes,
+    truncated,
     content: binary ? null : buffer.toString("utf8"),
+    sha256: binary || truncated ? null : sha256(buffer),
   };
+}
+
+function sha256(bytes: Buffer): string {
+  return crypto.createHash("sha256").update(bytes).digest("hex");
+}
+
+/**
+ * Replace an existing text file in the Agent workspace. The write is optimistic:
+ * it only lands when the file still hashes to what the editor loaded, so a
+ * concurrent Agent edit is reported as a conflict instead of being overwritten.
+ */
+export function writeWorkspaceFile(
+  config: DashboardWorkspaceConfig,
+  agentId: string,
+  requestedPath: unknown,
+  content: unknown,
+  expectedSha256: unknown,
+  maxFileBytes = MAX_WORKSPACE_EDIT_BYTES,
+): WorkspaceProjection {
+  if (typeof content !== "string" || typeof expectedSha256 !== "string" || !/^[0-9a-f]{64}$/.test(expectedSha256)) {
+    throw httpError("需要 content 和 expectedSha256", 400);
+  }
+  const { resolved } = safeWorkspacePath(config, agentId, requestedPath);
+  const stat = fs.statSync(resolved);
+  if (!stat.isFile()) throw httpError("只能编辑文件", 415);
+  if (stat.size > maxFileBytes) throw httpError("文件超过 1 MB，不能在线编辑", 413);
+  const current = fs.readFileSync(resolved);
+  if (current.includes(0)) throw httpError("二进制文件不能在线编辑", 415);
+  if (sha256(current) !== expectedSha256) throw httpError("文件已被修改，请重新加载后再编辑", 409);
+  const next = Buffer.from(content, "utf8");
+  if (next.byteLength > maxFileBytes) throw httpError("内容超过 1 MB", 413);
+  if (next.includes(0)) throw httpError("内容不能包含 NUL 字符", 400);
+  const temp = path.join(path.dirname(resolved), `.${path.basename(resolved)}.larkin-${crypto.randomBytes(6).toString("hex")}.tmp`);
+  const fd = fs.openSync(temp, "wx", stat.mode & 0o777);
+  try {
+    fs.writeFileSync(fd, next);
+    fs.fsyncSync(fd);
+  } finally { fs.closeSync(fd); }
+  try { fs.renameSync(temp, resolved); }
+  catch (error) { fs.rmSync(temp, { force: true }); throw error; }
+  return collectWorkspaceEntry(config, agentId, requestedPath, maxFileBytes);
 }

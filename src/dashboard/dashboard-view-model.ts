@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { readJson, readProcessState } from "../platform/process-state.js";
 import { isRuntimeReadinessCurrent, isSessionCurrent } from "../app/agent-readiness.js";
 import { isAllowedDashboardAvatarUrl } from "./dashboard-avatar.js";
-import { collectWorkspaceEntry as collectTypedWorkspaceEntry } from "./dashboard-workspace.js";
+import { collectWorkspaceEntry as collectTypedWorkspaceEntry, writeWorkspaceFile as writeTypedWorkspaceFile } from "./dashboard-workspace.js";
 import { buildFingerprint, packageVersion } from "../platform/build-info.js";
 import * as larkinConfig from "../platform/config.js";
 import { toUserRuntime } from "../runtime/user-runtime.js";
@@ -449,6 +449,13 @@ function readConversation(file: string, limit = 60): JsonRecord[] {
 export function collectWorkspaceEntry(agentId: string | null, requestedPath: string): unknown {
   const { config } = larkinConfig.loadConfig(process.env);
   return collectTypedWorkspaceEntry(config, agentId || "", requestedPath);
+}
+
+export function writeWorkspaceFile(body: Record<string, unknown>): unknown {
+  const allowed = new Set(["agentId", "path", "content", "expectedSha256"]);
+  if (Object.keys(body).some((key) => !allowed.has(key))) throw Object.assign(new Error("unsupported field"), { statusCode: 400 });
+  const { config } = larkinConfig.loadConfig(process.env);
+  return writeTypedWorkspaceFile(config, String(body.agentId || ""), body.path, body.content, body.expectedSha256);
 }
 
 export function resolveDashboardAvatarSource(agentId: string): string | null {
