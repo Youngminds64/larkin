@@ -19,9 +19,9 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { currentProcessMetadata, readJson } from "../platform/process-state.js";
 import { prepareDashboardLaunch } from "../dashboard/dashboard-lifecycle.js";
-import { DASHBOARD_BUILD_FINGERPRINT, DASHBOARD_BUILD_VERSION, PACKAGE_VERSION, collectStatus, collectWorkspaceEntry, loadDashboardConfig, resolveDashboardAvatarSource } from "../dashboard/dashboard-view-model.js";
+import { DASHBOARD_BUILD_FINGERPRINT, DASHBOARD_BUILD_VERSION, PACKAGE_VERSION, collectStatus, collectWorkspaceEntry, loadDashboardConfig, resolveDashboardAvatarSource, writeWorkspaceFile } from "../dashboard/dashboard-view-model.js";
 import { renderDashboardHtml } from "../dashboard/dashboard-template.js";
-import { createDashboardConfigController, createPiModelDirectoryResolver } from "../dashboard/dashboard-config-controller.js";
+import { assertWriteRequest, boundedJson, createDashboardConfigController, createPiModelDirectoryResolver } from "../dashboard/dashboard-config-controller.js";
 import { createDashboardAvatarController } from "../dashboard/dashboard-avatar.js";
 import { processCommandToken } from "./internal-command.js";
 import { dashboardAsset } from "../dashboard/dashboard-assets.js";
@@ -100,6 +100,29 @@ const server = http.createServer(async (req, res) => {
   }
   if (await avatarController.handle(req, res, requestUrl)) return;
   if (await configController.handle(req, res, requestUrl)) return;
+  if (requestUrl.pathname === "/api/workspace/file" && req.method === "PUT") {
+    let body: Record<string, unknown>;
+    try {
+      assertWriteRequest(req, csrfCapability);
+      // JSON escaping can roughly double a 1 MB text file.
+      body = await boundedJson(req, 3 * 1024 * 1024);
+    } catch {
+      res.writeHead(403, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ error: "workspace write rejected" }));
+      return;
+    }
+    try {
+      const saved = writeWorkspaceFile(body);
+      console.log(`[dashboard] workspace write agent=${String(body.agentId)} path=${String(body.path)} bytes=${Buffer.byteLength(String(body.content))}`);
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      res.end(JSON.stringify(saved));
+    } catch (error) {
+      const statusCode = typeof error === "object" && error !== null && "statusCode" in error && typeof error.statusCode === "number" ? error.statusCode : 500;
+      res.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+    }
+    return;
+  }
   if (requestUrl.pathname === "/api/workspace") {
     try {
       const body = JSON.stringify(collectWorkspaceEntry(requestUrl.searchParams.get("agent"), requestUrl.searchParams.get("path") || ""));

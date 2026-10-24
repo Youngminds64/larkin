@@ -147,6 +147,8 @@ export type WorkspaceProjection = {
   binary: boolean;
   truncated: boolean;
   content: string | null;
+  /** Present only for fully previewed text files; required to save an edit. */
+  sha256?: string | null;
 };
 
 declare global {

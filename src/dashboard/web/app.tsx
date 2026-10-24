@@ -551,12 +551,24 @@ function Reminders({ agent }: { agent: DashboardAgent }) {
   })}</div>;
 }
 
-function Workspace({ agentId }: { agentId: string }) {
+const INSTRUCTION_FILES = new Set(["AGENTS.md", "CLAUDE.md"]);
+
+function Workspace({ agentId, onDirtyChange }: { agentId: string; onDirtyChange: (dirty: boolean) => void }) {
   const [directory, setDirectory] = useState<Extract<WorkspaceProjection, { kind: "directory" }> | null>(null);
   const [file, setFile] = useState<Extract<WorkspaceProjection, { kind: "file" }> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveFeedback, setSaveFeedback] = useState<{ tone: "success" | "error"; text: string; conflict?: boolean } | null>(null);
   const gate = useRef(createLatestResponseGate());
+  const dirty = draft !== null && draft !== (file?.content ?? "");
+  useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
+  useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => { if (dirty) event.preventDefault(); };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [dirty]);
   const load = useCallback(async (requestedPath: string) => {
     const token = gate.current.issue();
     setLoading(true);
@@ -565,15 +577,62 @@ function Workspace({ agentId }: { agentId: string }) {
       if (!gate.current.accepts(token)) return;
       if (value.kind === "directory") { setDirectory(value); setFile(null); }
       else setFile(value);
+      setDraft(null);
+      setSaveFeedback(null);
       setError(null);
     } catch (reason) { if (gate.current.accepts(token)) setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { if (gate.current.accepts(token)) setLoading(false); }
   }, [agentId]);
   useEffect(() => { void load(""); }, [load]);
+  const open = (requestedPath: string) => {
+    if (dirty && !window.confirm("文件改动尚未保存，确定放弃吗？")) return;
+    void load(requestedPath);
+  };
+  const save = async () => {
+    if (!file || draft === null || !file.sha256 || saving) return;
+    setSaving(true);
+    try {
+      const saved = await jsonFetch<WorkspaceProjection>("/api/workspace/file", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-Larkin-CSRF": bootstrap.csrfCapability },
+        body: JSON.stringify({ agentId, path: file.path, content: draft, expectedSha256: file.sha256 }),
+      });
+      if (saved.kind === "file") setFile(saved);
+      setDraft(null);
+      setSaveFeedback({ tone: "success", text: INSTRUCTION_FILES.has(file.name)
+        ? "已保存。Agent 会在下一次开启新会话时读取这份规则。"
+        : "已保存。" });
+    } catch (reason) {
+      const conflict = reason instanceof JsonResponseError && /已被修改/.test(reason.message);
+      setSaveFeedback({ tone: "error", conflict, text: conflict
+        ? "保存失败：文件在你编辑期间已被 Agent 或其他人修改。你的草稿还在，可先复制出来，再载入最新版本。"
+        : `保存失败：${reason instanceof Error ? reason.message : String(reason)}` });
+    } finally { setSaving(false); }
+  };
+  const editing = draft !== null;
   const parts = directory?.path.split("/").filter(Boolean) || [];
+  const editable = Boolean(file && !file.binary && !file.truncated && file.sha256);
+  const preview = file ? <>
+    <header>
+      <strong>{file.name}{dirty ? <span className="dirty-dot" aria-label="未保存" title="未保存">●</span> : null}</strong>
+      <div className="workspace-file-actions">
+        <small>{file.truncated ? "仅预览前 1 MB" : `${file.size} B`}</small>
+        {editing ? <>
+          <Button disabled={saving} onClick={() => { if (!dirty || window.confirm("放弃这次改动？")) { setDraft(null); setSaveFeedback(null); } }}>取消</Button>
+          <Button className="primary" disabled={saving || !dirty} onClick={() => void save()}>{saving ? "保存中…" : "保存"}</Button>
+        </> : editable ? <Button onClick={() => { setDraft(file.content ?? ""); setSaveFeedback(null); }}>编辑</Button> : null}
+      </div>
+    </header>
+    {saveFeedback ? <p role="status" className={cn("workspace-feedback", saveFeedback.tone === "error" && "danger")}>{saveFeedback.text}{saveFeedback.conflict ? <Button onClick={() => { if (window.confirm("载入最新版本会丢弃你的草稿，确定吗？")) void load(file.path); }}>载入最新版本</Button> : null}</p> : null}
+    {file.binary ? <EmptyState title="二进制文件不可预览" />
+      : editing ? <textarea className="workspace-editor" aria-label={`编辑 ${file.name}`} value={draft ?? ""} spellCheck={false} disabled={saving}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") { event.preventDefault(); void save(); } }} />
+      : <pre>{file.content}</pre>}
+  </> : null;
   return <div className="workspace-browser">
-    <div className="workspace-side"><nav className="breadcrumbs" aria-label="工作区路径"><button onClick={() => void load("")}>workspace</button>{parts.map((part, index) => <span key={`${part}-${index}`}><ChevronRight size={12} /><button onClick={() => void load(parts.slice(0, index + 1).join("/"))}>{part}</button></span>)}</nav><div className="workspace-list" role="region" aria-label="工作区目录">{directory?.entries.map((entry) => <button key={entry.path} onClick={() => void load(entry.path)}>{entry.kind === "directory" ? <Folder size={15} /> : <File size={15} />}<span>{entry.name}</span><small>{entry.kind === "file" ? `${entry.size} B` : "目录"}</small></button>)}{!loading && directory && !directory.entries.length ? <EmptyState title="空目录" /> : null}</div></div>
-    <div className="workspace-preview" role="region" aria-label="文件预览">{loading ? <EmptyState title="读取工作区…" /> : error ? <EmptyState title="工作区读取失败" detail={error} /> : file ? <><header><strong>{file.name}</strong><small>{file.truncated ? "仅预览前 1 MB" : `${file.size} B`}</small></header>{file.binary ? <EmptyState title="二进制文件不可预览" /> : <pre>{file.content}</pre>}</> : <EmptyState title="只读工作区" detail="选择文件进行预览" />}</div>
+    <div className="workspace-side"><nav className="breadcrumbs" aria-label="工作区路径"><button onClick={() => open("")}>workspace</button>{parts.map((part, index) => <span key={`${part}-${index}`}><ChevronRight size={12} /><button onClick={() => open(parts.slice(0, index + 1).join("/"))}>{part}</button></span>)}</nav><div className="workspace-list" role="region" aria-label="工作区目录">{directory?.entries.map((entry) => <button key={entry.path} onClick={() => open(entry.path)}>{entry.kind === "directory" ? <Folder size={15} /> : <File size={15} />}<span>{entry.name}</span><small>{entry.kind === "file" ? `${entry.size} B` : "目录"}</small></button>)}{!loading && directory && !directory.entries.length ? <EmptyState title="空目录" /> : null}</div></div>
+    <div className={cn("workspace-preview", editing && "editing")} role="region" aria-label="文件预览">{loading ? <EmptyState title="读取工作区…" /> : error ? <EmptyState title="工作区读取失败" detail={error} /> : file ? preview : <EmptyState title="未选择文件" detail="选择文件进行预览；文本文件可以点「编辑」修改" />}</div>
   </div>;
 }
 
@@ -599,6 +658,7 @@ export function App() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [configRefreshKey, setConfigRefreshKey] = useState(0);
   const [agentDirty, setAgentDirty] = useState(false);
+  const [workspaceDirty, setWorkspaceDirty] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const scrollPositions = useRef(new Map<string, number>());
   const agents = polling.data?.agents || [];
@@ -628,6 +688,8 @@ export function App() {
   const allowContextChange = () => !agentDirty || window.confirm("Agent 配置尚未保存，确定放弃草稿吗？");
   const selectAgent = (agentId: string) => {
     if (!allowContextChange()) return;
+    if (workspaceDirty && !window.confirm("工作区文件改动尚未保存，确定放弃吗？")) return;
+    setWorkspaceDirty(false);
     setAgentDirty(false);
     writeRoute(agentId, tab);
     setMobileOpen(false);
@@ -682,7 +744,7 @@ export function App() {
           <section role="tabpanel" hidden={tab !== "conversation"}><Conversation agent={selected} /></section>
           <section role="tabpanel" hidden={tab !== "configuration"}><AgentConfiguration agentId={selected.agentId} readiness={selected.runtimeReadiness ?? null} onDirtyChange={setAgentDirty} refreshKey={configRefreshKey} /></section>
           <section role="tabpanel" hidden={tab !== "reminders"}><Reminders agent={selected} /></section>
-          <section className="workspace-tab-panel" role="tabpanel" hidden={tab !== "workspace"}><Workspace agentId={selected.agentId} /></section>
+          <section className="workspace-tab-panel" role="tabpanel" hidden={tab !== "workspace"}><Workspace agentId={selected.agentId} onDirtyChange={setWorkspaceDirty} /></section>
           <section role="tabpanel" hidden={tab !== "logs"}><LogsPanel agent={selected} /></section>
         </div>
       </>}
