@@ -103,7 +103,7 @@ function deferred<T>() {
 }
 
 beforeEach(() => {
-  window.history.replaceState(null, "", "/?agent=cli_AgentB2&tab=configuration");
+  window.history.replaceState(null, "", "/?agent=cli_AgentB2&tab=runtime");
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
     const url = new URL(String(input), "http://localhost");
     if (url.pathname === "/api/status") return ok(status);
@@ -125,12 +125,11 @@ afterEach(() => {
 
 describe("Agent-centric dashboard workbench", () => {
   it("shows the package version in desktop and mobile branding and explains the CLI-first configuration boundary", async () => {
-    window.history.replaceState(null, "", "/?agent=cli_AgentB2&tab=configuration");
     const { container } = render(<App />);
     await screen.findByRole("heading", { level: 1, name: "Builder" });
     expect(screen.getAllByText("v0.2.20")).toHaveLength(2);
     expect(container.querySelector(".app-topbar strong")).toHaveTextContent(/^Larkin v0\.2\.20$/);
-    expect(screen.getByRole("tab", { name: "配置" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "运行" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByText("Agent workbench")).not.toBeInTheDocument();
     const guidance = await screen.findByText(/这里只提供常用微调/);
     expect(guidance).toBeVisible();
@@ -138,9 +137,10 @@ describe("Agent-centric dashboard workbench", () => {
   });
 
   it("renders only explicit group policies without implementation-oriented precedence terminology", async () => {
+    window.history.replaceState(null, "", "/?agent=cli_AgentB2&tab=reply");
     render(<App />);
     expect(await screen.findByRole("heading", { level: 1, name: "Builder" })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "配置" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "回复规则" })).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByRole("heading", { level: 3, name: "群策略" })).toBeVisible();
     expect(screen.getByText("构建群")).toBeVisible();
     expect(screen.queryByText("继承群")).not.toBeInTheDocument();
@@ -318,7 +318,7 @@ describe("Agent-centric dashboard workbench", () => {
   it("renders production conversation direction, sender, and unawakened listening state", async () => {
     render(<App />);
     await screen.findByRole("heading", { level: 1, name: "Builder" });
-    await userEvent.click(screen.getByRole("tab", { name: "对话" }));
+    await userEvent.click(screen.getByRole("tab", { name: "动态" }));
     expect(screen.getByText("已发送")).toBeVisible();
     expect(screen.getByText("旁听 · 未唤醒")).toBeVisible();
     expect(screen.getByText("入站 · 已唤醒")).toBeVisible();
@@ -333,7 +333,7 @@ describe("Agent-centric dashboard workbench", () => {
     expect(screen.getByText("累计 12,345 tokens")).toBeVisible();
     expect(screen.getByText("最近一轮 678 tokens")).toBeVisible();
     expect(screen.getByText("Compact 2 次 · idle")).toBeVisible();
-    await userEvent.click(screen.getByRole("tab", { name: "概览" }));
+    await userEvent.click(screen.getByRole("tab", { name: "动态" }));
     expect(screen.getByText("累计 Token")).toBeVisible();
     expect(screen.getByText("12,345")).toBeVisible();
     expect(screen.getByText("最近一轮用量")).toBeVisible();
@@ -349,10 +349,10 @@ describe("Agent-centric dashboard workbench", () => {
     render(<App />);
     await screen.findByRole("heading", { level: 1, name: "Builder" });
     scrollY = 420;
-    await userEvent.click(screen.getByRole("tab", { name: "对话" }));
+    await userEvent.click(screen.getByRole("tab", { name: "动态" }));
     await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: "auto" }));
     scrollY = 88;
-    await userEvent.click(screen.getByRole("tab", { name: "配置" }));
+    await userEvent.click(screen.getByRole("tab", { name: "运行" }));
     await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith({ top: 420, behavior: "auto" }));
   });
 
@@ -606,7 +606,7 @@ describe("Agent-centric dashboard workbench", () => {
     try {
       render(<App />);
       await screen.findByRole("heading", { level: 1, name: "Builder" });
-      await userEvent.click(screen.getByRole("tab", { name: "提醒" }));
+      await userEvent.click(screen.getByRole("tab", { name: "动态" }));
       const scheduled = screen.getByText("等待执行提醒").closest("article");
       const repeated = screen.getByText("重复等待提醒").closest("article");
       const pending = screen.getByText("旧版等待提醒").closest("article");
@@ -641,7 +641,7 @@ describe("Agent-centric dashboard workbench", () => {
     try {
       render(<App />);
       await screen.findByRole("heading", { level: 1, name: "Builder" });
-      await userEvent.click(screen.getByRole("tab", { name: "日志" }));
+      await userEvent.click(screen.getByText("运行日志"));
       const activePanel = screen.getByRole("tabpanel");
       const dotFor = (detail: string) => within(activePanel).getByText(detail).closest("li")?.querySelector(".timeline-dot");
       expect(dotFor("正在执行语义")).toHaveClass("state-active");
@@ -655,13 +655,15 @@ describe("Agent-centric dashboard workbench", () => {
     } finally { agents[1].feed = prior; }
   });
 
-  it("marks the active workspace route so the workspace can fill the remaining viewport", async () => {
+  it("folds workspace files and logs under 运行 until they are opened", async () => {
     render(<App />);
     await screen.findByRole("heading", { level: 1, name: "Builder" });
-    await userEvent.click(screen.getByRole("tab", { name: "工作区" }));
+    expect(screen.getByRole("tab", { name: "运行" })).toHaveAttribute("aria-selected", "true");
+    expect(document.querySelector(".workspace-browser")).not.toBeVisible();
+    await userEvent.click(screen.getByText("工作区文件"));
     await screen.findByText("未选择文件");
-    expect(document.querySelector(".agent-content")).toHaveClass("workspace-active");
     expect(document.querySelector(".workspace-browser")).toBeVisible();
+    expect(screen.getByText("运行日志").closest("details")).not.toHaveAttribute("open");
   });
 
   it("edits a workspace text file with an explicit save and surfaces a concurrent-edit conflict", async () => {
@@ -688,7 +690,7 @@ describe("Agent-centric dashboard workbench", () => {
     }));
     render(<App />);
     await screen.findByRole("heading", { level: 1, name: "Builder" });
-    await userEvent.click(screen.getByRole("tab", { name: "工作区" }));
+    await userEvent.click(screen.getByText("工作区文件"));
     await userEvent.click(await screen.findByRole("button", { name: /AGENTS\.md/ }));
     await userEvent.click(await screen.findByRole("button", { name: "编辑" }));
     const editor = screen.getByLabelText("编辑 AGENTS.md");
@@ -838,7 +840,7 @@ describe("Agent-centric dashboard workbench", () => {
     expect([...runtimeSelect.querySelectorAll("option")].map((option) => option.getAttribute("value"))).toEqual(["codex", "claude", "pi"]);
   });
 
-  it("renders readiness in Overview and Agent 配置, and shows a rejected runtime-switch error", async () => {
+  it("renders readiness in the 运行 settings and summary, and shows a rejected runtime-switch error", async () => {
     const missing = {
       runtime: "claude" as const,
       state: "missing" as const,
@@ -872,9 +874,7 @@ describe("Agent-centric dashboard workbench", () => {
       render(<App />);
       await screen.findByRole("heading", { level: 1, name: "Builder" });
       expect(await screen.findByText(/^Readiness unauthenticated · codex is installed but not logged in · Run `codex login`/)).toBeVisible();
-      await userEvent.click(screen.getByRole("tab", { name: "概览" }));
       expect(screen.getByText(/^unauthenticated · codex is installed but not logged in · Run `codex login`/)).toBeVisible();
-      await userEvent.click(screen.getByRole("tab", { name: "配置" }));
       await userEvent.selectOptions(await screen.findByLabelText("Runtime"), "claude");
       await userEvent.click(screen.getByRole("button", { name: "保存并应用" }));
       const feedback = await screen.findByRole("status");
