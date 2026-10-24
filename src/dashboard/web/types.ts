@@ -172,3 +172,19 @@ export interface InstructionFilesResponse {
     error: string | null;
   }>;
 }
+
+export type CapabilityKind = "skill" | "subagent" | "plugin" | "mcp";
+
+export interface CapabilitiesResponse {
+  runtime: string;
+  items: Array<{
+    kind: CapabilityKind;
+    source: "workspace" | "global" | "plugin" | "builtin";
+    name: string;
+    description: string | null;
+    location: string;
+    status: "ok" | "disabled" | "invalid" | "shadowed";
+    detail: string | null;
+  }>;
+  unsupported: CapabilityKind[];
+}

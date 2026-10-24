@@ -4,7 +4,7 @@ import {
   Gauge, Logs, Menu, MessageSquareText, RefreshCw, ScrollText, Search, Settings2, SlidersHorizontal, Users, XCircle,
 } from "lucide-react";
 import { AGENT_TABS, createLatestResponseGate, filterAgents, parseRoute, reconcileAgentId, routeSearch, sameDraft, type AgentTab } from "./dashboard-state";
-import type { ConfigAgent, ConfigResponse, DashboardAgent, InstructionFilesResponse, RuntimeModel, RuntimeReadinessView, StatusResponse, WorkspaceProjection } from "./types";
+import type { CapabilitiesResponse, CapabilityKind, ConfigAgent, ConfigResponse, DashboardAgent, InstructionFilesResponse, RuntimeModel, RuntimeReadinessView, StatusResponse, WorkspaceProjection } from "./types";
 import { Badge, Button, EmptyState, Sheet, cn } from "./components/ui";
 import { RUNTIME_OPTIONS } from "../../runtime/user-runtime.js";
 
@@ -733,24 +733,106 @@ function AgentPersona({ agent, onDirtyChange }: { agent: DashboardAgent; onDirty
     : claudeView?.file ? <>当前是 Claude runtime，读取的是 CLAUDE.md。它有单独的内容，没有引用 AGENTS.md，可以在「工作区」里编辑。</>
     : agentsView?.file ? <>当前是 Claude runtime，还没有 CLAUDE.md，这份设定不会被读取。<Button disabled={creating} onClick={() => void createFiles([{ name: "CLAUDE.md", content: CLAUDE_IMPORTS_AGENTS }])}>新建 CLAUDE.md 并引用 AGENTS.md</Button></>
     : null;
+  const [view, setView] = useState<"agents" | CapabilityKind>("agents");
+  const capabilities = useCapabilities(agentId);
+  const countOf = (kind: CapabilityKind) => capabilities.data?.items.filter((item) => item.kind === kind).length;
   return <section className="persona-section">
-    <div className="section-heading"><div><h3>人设与规则</h3><p>新会话开始时读取。Codex、Pi 直接读 AGENTS.md，Claude 通过 CLAUDE.md 里的 <code>@AGENTS.md</code> 引用。改完从下一个新会话开始生效。</p></div></div>
-    {error ? <p role="alert" className="workspace-feedback danger">{error}</p> : null}
-    {claudeNote ? <p className="persona-note">{claudeNote}</p> : null}
-    {!data && !error ? <EmptyState title="读取 AGENTS.md…" /> : null}
-    {agentsView?.error ? <EmptyState title="AGENTS.md 读取失败" detail={agentsView.error} />
-      : agentsView?.file ? <div className="workspace-preview persona-editor"><TextFileEditor agentId={agentId} file={agentsView.file} onSaved={(file) => setData((current) => current && {
-        files: current.files.map((view) => view.name === "AGENTS.md" ? { ...view, file } : view),
-      })} onReload={() => void load()} onDirtyChange={onDirtyChange} /></div>
-      : agentsView ? <div className="persona-missing">
-        <EmptyState title="还没有 AGENTS.md" detail="写下这个 Agent 是谁、怎么说话、遇到什么情况怎么做。可以从模板开始。" />
-        <div className="form-actions">
-          <Button className="primary" disabled={creating} onClick={() => createAgents(AGENTS_TEMPLATE)}>用模板新建</Button>
-          <Button disabled={creating} onClick={() => createAgents("")}>新建空白文件</Button>
+    <div className="persona-switch" role="group" aria-label="人设与能力分类">
+      {(["agents", ...CAPABILITY_KINDS] as const).map((item) => <button key={item} type="button" aria-pressed={view === item} className={view === item ? "active" : ""} onClick={() => setView(item)}>
+        {item === "agents" ? "AGENTS.md" : CAPABILITY_LABELS[item]}{item !== "agents" && countOf(item) !== undefined && !capabilities.data?.unsupported.includes(item) ? <small>{countOf(item)}</small> : null}
+      </button>)}
+    </div>
+    <div hidden={view !== "agents"}>
+      <div className="section-heading"><div><h3>人设与规则</h3><p>新会话开始时读取。Codex、Pi 直接读 AGENTS.md，Claude 通过 CLAUDE.md 里的 <code>@AGENTS.md</code> 引用。改完从下一个新会话开始生效。</p></div></div>
+      {error ? <p role="alert" className="workspace-feedback danger">{error}</p> : null}
+      {claudeNote ? <p className="persona-note">{claudeNote}</p> : null}
+      {!data && !error ? <EmptyState title="读取 AGENTS.md…" /> : null}
+      {agentsView?.error ? <EmptyState title="AGENTS.md 读取失败" detail={agentsView.error} />
+        : agentsView?.file ? <div className="workspace-preview persona-editor"><TextFileEditor agentId={agentId} file={agentsView.file} onSaved={(file) => setData((current) => current && {
+          files: current.files.map((entry) => entry.name === "AGENTS.md" ? { ...entry, file } : entry),
+        })} onReload={() => void load()} onDirtyChange={onDirtyChange} /></div>
+        : agentsView ? <div className="persona-missing">
+          <EmptyState title="还没有 AGENTS.md" detail="写下这个 Agent 是谁、怎么说话、遇到什么情况怎么做。可以从模板开始。" />
+          <div className="form-actions">
+            <Button className="primary" disabled={creating} onClick={() => createAgents(AGENTS_TEMPLATE)}>用模板新建</Button>
+            <Button disabled={creating} onClick={() => createAgents("")}>新建空白文件</Button>
+          </div>
         </div>
-      </div>
-      : null}
+        : null}
+    </div>
+    {view !== "agents" ? <CapabilityList agent={agent} kind={view} state={capabilities} /> : null}
   </section>;
+}
+
+const CAPABILITY_KINDS = ["skill", "subagent", "plugin", "mcp"] as const satisfies readonly CapabilityKind[];
+const CAPABILITY_LABELS: Record<CapabilityKind, string> = { skill: "Skill", subagent: "Subagent", plugin: "插件", mcp: "MCP" };
+type CapabilityItem = CapabilitiesResponse["items"][number];
+const CAPABILITY_SOURCES: Array<{ source: CapabilityItem["source"]; title: string; note: string }> = [
+  { source: "workspace", title: "工作区", note: "只属于这个 Agent，改动从下一个新会话生效。" },
+  { source: "global", title: "全局", note: "来自本机的全局配置，所有 Agent 和你自己用这个 runtime 时共用，这里只读。" },
+  { source: "plugin", title: "插件带的", note: "随插件安装，内容跟着插件更新，这里只读。" },
+  { source: "builtin", title: "自带", note: "runtime 自带，不能修改。" },
+];
+const CAPABILITY_STATUS: Record<CapabilityItem["status"], { label: string; className: string }> = {
+  ok: { label: "可用", className: "success" },
+  disabled: { label: "已停用", className: "" },
+  invalid: { label: "需要修复", className: "warning" },
+  shadowed: { label: "被覆盖", className: "" },
+};
+
+function useCapabilities(agentId: string) {
+  const [data, setData] = useState<CapabilitiesResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const gate = useRef(createLatestResponseGate());
+  const load = useCallback(async () => {
+    const token = gate.current.issue();
+    try {
+      const value = await jsonFetch<CapabilitiesResponse>(`/api/agent-capabilities?agent=${encodeURIComponent(agentId)}`);
+      if (!gate.current.accepts(token)) return;
+      setData(value);
+      setError(null);
+    } catch (reason) { if (gate.current.accepts(token)) setError(reason instanceof Error ? reason.message : String(reason)); }
+  }, [agentId]);
+  useEffect(() => { void load(); }, [load]);
+  return { data, error, reload: load };
+}
+
+function CapabilityList({ agent, kind, state }: { agent: DashboardAgent; kind: CapabilityKind; state: ReturnType<typeof useCapabilities> }) {
+  const items = CAPABILITY_SOURCES.flatMap(({ source }) => (state.data?.items || []).filter((item) => item.kind === kind && item.source === source));
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const keyOf = (item: CapabilityItem) => `${item.source}:${item.location}:${item.name}`;
+  const selected = items.find((item) => keyOf(item) === selectedKey) || items[0] || null;
+  const label = CAPABILITY_LABELS[kind];
+  if (state.error) return <EmptyState title={`${label} 读取失败`} detail={state.error} />;
+  if (!state.data) return <EmptyState title={`读取 ${label}…`} />;
+  if (state.data.unsupported.includes(kind)) return <EmptyState title={`${state.data.runtime} 不支持 ${label}`} detail="切换 runtime 后这里会显示对应的内容。" />;
+  return <div className="capability-view">
+    <div className="section-heading"><div><p>{agent.displayName || agent.name}（{state.data.runtime}）新会话里能用的 {label}。工作区里的只属于它；全局的所有 Agent 共用，这里只读。</p></div><Button onClick={() => void state.reload()}>刷新</Button></div>
+    {!items.length ? <EmptyState title={`还没有 ${label}`} /> : <div className="capability-layout">
+      <div className="capability-groups">{CAPABILITY_SOURCES.map(({ source, title }) => {
+        const group = items.filter((item) => item.source === source);
+        if (!group.length) return null;
+        return <section key={source} aria-label={title}>
+          <h4>{title}</h4>
+          <div className="capability-rows">{group.map((item) => {
+            const status = CAPABILITY_STATUS[item.status];
+            return <button key={keyOf(item)} type="button" aria-pressed={selected === item} className={selected === item ? "active" : ""} onClick={() => setSelectedKey(keyOf(item))}>
+              <span className="capability-row-text"><strong>{item.name}</strong><small>{item.description || item.detail || "没有说明"}</small></span>
+              <Badge className={status.className}>{status.label}</Badge>
+            </button>;
+          })}</div>
+        </section>;
+      })}</div>
+      {selected ? <aside className="capability-detail" aria-label={`${selected.name} 详情`}>
+        <strong>{selected.name}</strong>
+        {selected.description ? <p>{selected.description}</p> : null}
+        <div className="capability-detail-badges"><Badge>{CAPABILITY_SOURCES.find((entry) => entry.source === selected.source)?.title}</Badge><Badge className={CAPABILITY_STATUS[selected.status].className}>{CAPABILITY_STATUS[selected.status].label}</Badge></div>
+        {selected.detail ? <p className="capability-detail-problem">{selected.detail}</p> : null}
+        <code>{selected.location}</code>
+        <p className="capability-detail-note">{CAPABILITY_SOURCES.find((entry) => entry.source === selected.source)?.note}</p>
+      </aside> : null}
+    </div>}
+  </div>;
 }
 
 function LogsPanel({ agent }: { agent: DashboardAgent }) {

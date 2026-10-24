@@ -110,6 +110,7 @@ beforeEach(() => {
     if (url.pathname === "/api/config") return ok(config(url.searchParams.get("agent") || undefined));
     if (url.pathname === "/api/workspace") return ok({ kind: "directory", path: "", parent: null, entries: [] });
     if (url.pathname === "/api/agent-rules") return ok(missingRules());
+    if (url.pathname === "/api/agent-capabilities") return ok({ runtime: "codex", items: [], unsupported: [] });
     throw new Error(`unexpected request ${url}`);
   }));
 });
@@ -771,6 +772,50 @@ describe("Agent-centric dashboard workbench", () => {
       await waitFor(() => expect(creates).toEqual([{ agentId: "cli_AgentB2", name: "CLAUDE.md", content: "@AGENTS.md\n" }]));
       await waitFor(() => expect(screen.queryByText(/这份设定不会被读取/)).not.toBeInTheDocument());
     } finally { agents[1].runtime = prior; }
+  });
+
+  it("lists capabilities by source in 人设与能力 and says when the runtime lacks a kind", async () => {
+    const capabilities: Record<string, unknown> = {
+      cli_AgentB2: { runtime: "codex", unsupported: [], items: [
+        { kind: "skill", source: "global", name: "lark-im", description: "收发飞书消息", location: "~/.agents/skills/lark-im/SKILL.md", status: "ok", detail: null },
+        { kind: "skill", source: "workspace", name: "weekly-report", description: "整理周报", location: ".agents/skills/weekly-report/SKILL.md", status: "ok", detail: null },
+        { kind: "skill", source: "global", name: "notes", description: null, location: "~/.agents/skills/notes/SKILL.md", status: "invalid", detail: "缺少 description" },
+        { kind: "mcp", source: "global", name: "feishu-docs", description: "stdio · npx", location: "~/.codex/config.toml", status: "ok", detail: null },
+      ] },
+      cli_AgentA1: { runtime: "pi", unsupported: ["subagent", "plugin", "mcp"], items: [] },
+    };
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/status") return ok(status);
+      if (url.pathname === "/api/config") return ok(config(url.searchParams.get("agent") || undefined));
+      if (url.pathname.startsWith("/api/models/")) return ok({ models: [{ id: "default", label: "default" }] });
+      if (url.pathname === "/api/workspace") return ok({ kind: "directory", path: "", parent: null, entries: [] });
+      if (url.pathname === "/api/agent-rules") return ok(missingRules());
+      if (url.pathname === "/api/agent-capabilities") return ok(capabilities[url.searchParams.get("agent") || ""]);
+      throw new Error(`unexpected request ${url}`);
+    }));
+    window.history.replaceState(null, "", "/?agent=cli_AgentB2&tab=persona");
+    render(<App />);
+    await screen.findByRole("heading", { level: 1, name: "Builder" });
+    await userEvent.click(await screen.findByRole("button", { name: /^Skill\s*3$/ }));
+    const groups = screen.getAllByRole("region").filter((region) => ["工作区", "全局"].includes(region.getAttribute("aria-label") || ""));
+    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["工作区", "全局"]);
+    expect(within(groups[0]).getByText("weekly-report")).toBeVisible();
+    expect(within(screen.getByRole("complementary", { name: "weekly-report 详情" })).getByText("只属于这个 Agent，改动从下一个新会话生效。")).toBeVisible();
+    await userEvent.click(within(groups[1]).getByRole("button", { name: /notes/ }));
+    const detail = screen.getByRole("complementary", { name: "notes 详情" });
+    expect(within(detail).getByText("需要修复")).toBeVisible();
+    expect(within(detail).getByText("缺少 description")).toBeVisible();
+    expect(within(detail).getByText("~/.agents/skills/notes/SKILL.md")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: /^MCP\s*1$/ }));
+    expect(within(screen.getByRole("complementary", { name: "feishu-docs 详情" })).getByText("stdio · npx")).toBeVisible();
+
+    cleanup();
+    window.history.replaceState(null, "", "/?agent=cli_AgentA1&tab=persona");
+    render(<App />);
+    await screen.findByRole("heading", { level: 1, name: "研究员" });
+    await userEvent.click(await screen.findByRole("button", { name: "Subagent" }));
+    expect(screen.getByText("pi 不支持 Subagent")).toBeVisible();
   });
 
   it("does not render Provider Credentials and keeps only three runtime options", async () => {
