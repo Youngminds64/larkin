@@ -9,7 +9,7 @@ import { Badge, Button, EmptyState, Sheet, cn } from "./components/ui";
 import { RUNTIME_OPTIONS } from "../../runtime/user-runtime.js";
 
 const TAB_LABELS: Record<AgentTab, string> = {
-  activity: "动态", persona: "人设与能力", reply: "回复规则", runtime: "运行",
+  activity: "动态", persona: "人设与能力", reply: "回复规则", runtime: "模型与运行",
 };
 
 const bootstrap = window.__LARKIN_DASHBOARD__ || {

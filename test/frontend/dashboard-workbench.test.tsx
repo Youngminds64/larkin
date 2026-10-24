@@ -129,7 +129,7 @@ describe("Agent-centric dashboard workbench", () => {
     await screen.findByRole("heading", { level: 1, name: "Builder" });
     expect(screen.getAllByText("v0.2.20")).toHaveLength(2);
     expect(container.querySelector(".app-topbar strong")).toHaveTextContent(/^Larkin v0\.2\.20$/);
-    expect(screen.getByRole("tab", { name: "运行" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "模型与运行" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByText("Agent workbench")).not.toBeInTheDocument();
     const guidance = await screen.findByText(/这里只提供常用微调/);
     expect(guidance).toBeVisible();
@@ -352,7 +352,7 @@ describe("Agent-centric dashboard workbench", () => {
     await userEvent.click(screen.getByRole("tab", { name: "动态" }));
     await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: "auto" }));
     scrollY = 88;
-    await userEvent.click(screen.getByRole("tab", { name: "运行" }));
+    await userEvent.click(screen.getByRole("tab", { name: "模型与运行" }));
     await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith({ top: 420, behavior: "auto" }));
   });
 
@@ -655,10 +655,10 @@ describe("Agent-centric dashboard workbench", () => {
     } finally { agents[1].feed = prior; }
   });
 
-  it("folds workspace files and logs under 运行 until they are opened", async () => {
+  it("folds workspace files and logs under 模型与运行 until they are opened", async () => {
     render(<App />);
     await screen.findByRole("heading", { level: 1, name: "Builder" });
-    expect(screen.getByRole("tab", { name: "运行" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "模型与运行" })).toHaveAttribute("aria-selected", "true");
     expect(document.querySelector(".workspace-browser")).not.toBeVisible();
     await userEvent.click(screen.getByText("工作区文件"));
     await screen.findByText("未选择文件");
@@ -840,7 +840,7 @@ describe("Agent-centric dashboard workbench", () => {
     expect([...runtimeSelect.querySelectorAll("option")].map((option) => option.getAttribute("value"))).toEqual(["codex", "claude", "pi"]);
   });
 
-  it("renders readiness in the 运行 settings and summary, and shows a rejected runtime-switch error", async () => {
+  it("renders readiness in the 模型与运行 settings and summary, and shows a rejected runtime-switch error", async () => {
     const missing = {
       runtime: "claude" as const,
       state: "missing" as const,
