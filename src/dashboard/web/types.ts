@@ -161,3 +161,12 @@ declare global {
     };
   }
 }
+
+export interface InstructionFilesResponse {
+  files: Array<{
+    name: "AGENTS.md" | "CLAUDE.md";
+    linkedTo: string | null;
+    file: Extract<WorkspaceProjection, { kind: "file" }> | null;
+    error: string | null;
+  }>;
+}

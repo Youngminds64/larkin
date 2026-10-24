@@ -97,3 +97,42 @@ test("dashboard workspace edits replace text files only when the loaded version 
     fs.rmSync(outside, { recursive: true, force: true });
   }
 });
+
+test("dashboard rule files report AGENTS.md / CLAUDE.md and only create missing ones", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-dashboard-rules-"));
+  try {
+    const { collectInstructionFiles, createInstructionFile } = await import(MODULE);
+    const agentId = "cli_dashboard3";
+    const workspace = path.join(temp, "agents", agentId);
+    fs.mkdirSync(workspace, { recursive: true });
+    const config = { larkinHome: temp, agents: { [agentId]: { agentId } } };
+
+    assert.deepEqual(collectInstructionFiles(config, agentId).files.map(({ name, file, linkedTo, error }) => ({ name, file, linkedTo, error })), [
+      { name: "AGENTS.md", file: null, linkedTo: null, error: null },
+      { name: "CLAUDE.md", file: null, linkedTo: null, error: null },
+    ]);
+
+    const created = createInstructionFile(config, agentId, "AGENTS.md", "# 角色\n");
+    assert.equal(created.content, "# 角色\n");
+    assert.equal(fs.statSync(path.join(workspace, "AGENTS.md")).mode & 0o777, 0o644);
+    // Never overwrites: a second create (e.g. from a stale page) is a conflict.
+    assert.throws(() => createInstructionFile(config, agentId, "AGENTS.md", "other"), (error) => error.statusCode === 409);
+    assert.equal(fs.readFileSync(path.join(workspace, "AGENTS.md"), "utf8"), "# 角色\n");
+
+    fs.symlinkSync("AGENTS.md", path.join(workspace, "CLAUDE.md"));
+    const [agents, claude] = collectInstructionFiles(config, agentId).files;
+    assert.equal(agents.file.content, "# 角色\n");
+    assert.equal(claude.linkedTo, "AGENTS.md");
+    assert.throws(() => createInstructionFile(config, agentId, "CLAUDE.md", "@AGENTS.md\n"), (error) => error.statusCode === 409);
+
+    assert.throws(() => createInstructionFile(config, agentId, "notes.md", "x"), (error) => error.statusCode === 400);
+    assert.throws(() => createInstructionFile(config, agentId, "../AGENTS.md", "x"), (error) => error.statusCode === 400);
+    assert.throws(() => createInstructionFile(config, agentId, "AGENTS.md", 42), (error) => error.statusCode === 400);
+    fs.rmSync(path.join(workspace, "CLAUDE.md"));
+    assert.throws(() => createInstructionFile(config, agentId, "CLAUDE.md", "a\u0000b"), (error) => error.statusCode === 400);
+    assert.throws(() => createInstructionFile(config, agentId, "CLAUDE.md", "too long", 4), (error) => error.statusCode === 413);
+    assert.equal(fs.existsSync(path.join(workspace, "CLAUDE.md")), false);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});

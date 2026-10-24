@@ -1,4 +1,4 @@
-export const AGENT_TABS = ["overview", "conversation", "configuration", "reminders", "workspace", "logs"] as const;
+export const AGENT_TABS = ["overview", "persona", "conversation", "configuration", "reminders", "workspace", "logs"] as const;
 export type AgentTab = typeof AGENT_TABS[number];
 
 export interface RouteState {
