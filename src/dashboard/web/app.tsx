@@ -9,7 +9,7 @@ import { Badge, Button, EmptyState, Sheet, cn } from "./components/ui";
 import { RUNTIME_OPTIONS } from "../../runtime/user-runtime.js";
 
 const TAB_LABELS: Record<AgentTab, string> = {
-  overview: "概览", conversation: "对话", configuration: "配置", rules: "设定", reminders: "提醒", workspace: "工作区", logs: "日志",
+  overview: "概览", conversation: "对话", configuration: "配置", persona: "人设与能力", reminders: "提醒", workspace: "工作区", logs: "日志",
 };
 
 const bootstrap = window.__LARKIN_DASHBOARD__ || {
@@ -649,20 +649,22 @@ function Workspace({ agentId, onDirtyChange }: { agentId: string; onDirtyChange:
   </div>;
 }
 
-const RULE_FILE_READERS: Record<string, readonly string[]> = { "AGENTS.md": ["codex", "pi"], "CLAUDE.md": ["claude", "pi"] };
 const AGENTS_TEMPLATE = "# 角色\n\n（这个 Agent 是谁，替谁做事）\n\n# 说话方式\n\n（语气、篇幅、要不要用表情）\n\n# 工作习惯\n\n（遇到什么情况怎么做）\n\n# 不要做的事\n\n";
 const CLAUDE_IMPORTS_AGENTS = "@AGENTS.md\n";
 
-function AgentRules({ agent, onDirtyChange }: { agent: DashboardAgent; onDirtyChange: (dirty: boolean) => void }) {
+type InstructionFileView = InstructionFilesResponse["files"][number];
+
+/** CLAUDE.md follows AGENTS.md when it links to it or imports it with an `@AGENTS.md` line. */
+function claudeFollowsAgents(view: InstructionFileView | undefined): boolean {
+  return view?.linkedTo === "AGENTS.md" || /^@AGENTS\.md\s*$/m.test(view?.file?.content || "");
+}
+
+function AgentPersona({ agent, onDirtyChange }: { agent: DashboardAgent; onDirtyChange: (dirty: boolean) => void }) {
   const [data, setData] = useState<InstructionFilesResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [dirtyFiles, setDirtyFiles] = useState<Record<string, boolean>>({});
   const gate = useRef(createLatestResponseGate());
   const agentId = agent.agentId;
-  useEffect(() => onDirtyChange(Object.values(dirtyFiles).some(Boolean)), [dirtyFiles, onDirtyChange]);
-  const dirtyHandlers = useMemo(() => Object.fromEntries(["AGENTS.md", "CLAUDE.md"].map((name) => [name,
-    (dirty: boolean) => setDirtyFiles((current) => current[name] === dirty ? current : { ...current, [name]: dirty })])), []);
   const load = useCallback(async () => {
     const token = gate.current.issue();
     try {
@@ -673,50 +675,49 @@ function AgentRules({ agent, onDirtyChange }: { agent: DashboardAgent; onDirtyCh
     } catch (reason) { if (gate.current.accepts(token)) setError(reason instanceof Error ? reason.message : String(reason)); }
   }, [agentId]);
   useEffect(() => { void load(); }, [load]);
-  const create = async (name: string, content: string) => {
+  const agentsView = data?.files.find((view) => view.name === "AGENTS.md");
+  const claudeView = data?.files.find((view) => view.name === "CLAUDE.md");
+  const createFiles = async (files: Array<{ name: string; content: string }>) => {
     setCreating(true);
     try {
-      await jsonFetch<WorkspaceProjection>("/api/agent-rules/file", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Larkin-CSRF": bootstrap.csrfCapability },
-        body: JSON.stringify({ agentId, name, content }),
-      });
-    } catch (reason) { setError(`新建 ${name} 失败：${reason instanceof Error ? reason.message : String(reason)}`); }
+      for (const { name, content } of files) {
+        await jsonFetch<WorkspaceProjection>("/api/agent-rules/file", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Larkin-CSRF": bootstrap.csrfCapability },
+          body: JSON.stringify({ agentId, name, content }),
+        });
+      }
+    } catch (reason) { setError(`新建失败：${reason instanceof Error ? reason.message : String(reason)}`); }
     finally { setCreating(false); }
     await load();
   };
-  const replaceFile = (name: string, file: WorkspaceFile) => setData((current) => current && {
-    files: current.files.map((view) => view.name === name ? { ...view, file } : view),
-  });
-  const primary = agent.runtime === "claude" ? "CLAUDE.md" : "AGENTS.md";
-  const files = [...(data?.files || [])].sort((left, right) => Number(right.name === primary) - Number(left.name === primary));
-  return <section className="rules-section">
-    <div className="section-heading"><div><h3>Agent 设定</h3><p>这里的内容会在每次开启新会话时交给 Agent，适合写它的角色、说话方式、工作习惯和不要做的事。当前 runtime 是 {agent.runtime}，读取 {agent.runtime === "pi" ? "AGENTS.md 和 CLAUDE.md" : primary}。改完从下一个新会话开始生效。</p></div></div>
+  // Creating AGENTS.md also adds a CLAUDE.md that imports it, so switching to Claude keeps the same persona.
+  const createAgents = (content: string) => void createFiles([
+    { name: "AGENTS.md", content },
+    ...(claudeView && !claudeView.file && !claudeView.error && !claudeView.linkedTo ? [{ name: "CLAUDE.md", content: CLAUDE_IMPORTS_AGENTS }] : []),
+  ]);
+  const claudeNote = agent.runtime !== "claude" || !data || claudeFollowsAgents(claudeView) ? null
+    : claudeView?.error ? <>CLAUDE.md 读取失败：{claudeView.error}</>
+    : claudeView?.file ? <>当前是 Claude runtime，读取的是 CLAUDE.md。它有单独的内容，没有引用 AGENTS.md，可以在「工作区」里编辑。</>
+    : agentsView?.file ? <>当前是 Claude runtime，还没有 CLAUDE.md，这份设定不会被读取。<Button disabled={creating} onClick={() => void createFiles([{ name: "CLAUDE.md", content: CLAUDE_IMPORTS_AGENTS }])}>新建 CLAUDE.md 并引用 AGENTS.md</Button></>
+    : null;
+  return <section className="persona-section">
+    <div className="section-heading"><div><h3>人设与规则</h3><p>新会话开始时读取。Codex、Pi 直接读 AGENTS.md，Claude 通过 CLAUDE.md 里的 <code>@AGENTS.md</code> 引用。改完从下一个新会话开始生效。</p></div></div>
     {error ? <p role="alert" className="workspace-feedback danger">{error}</p> : null}
-    {!data && !error ? <EmptyState title="读取设定…" /> : null}
-    {files.map((view) => {
-      const reads = (RULE_FILE_READERS[view.name] || []).includes(agent.runtime);
-      return <article key={view.name} className="rule-file" aria-label={view.name}>
-        <div className="rule-file-meta">
-          <Badge className={reads ? "success" : ""}>{reads ? "当前 runtime 会读取" : "当前 runtime 不读取"}</Badge>
-          {view.linkedTo ? <Badge>链接到 {view.linkedTo}</Badge> : null}
-          {view.file?.content?.trim() === CLAUDE_IMPORTS_AGENTS.trim() ? <Badge>引用 AGENTS.md</Badge> : null}
+    {claudeNote ? <p className="persona-note">{claudeNote}</p> : null}
+    {!data && !error ? <EmptyState title="读取 AGENTS.md…" /> : null}
+    {agentsView?.error ? <EmptyState title="AGENTS.md 读取失败" detail={agentsView.error} />
+      : agentsView?.file ? <div className="workspace-preview persona-editor"><TextFileEditor agentId={agentId} file={agentsView.file} onSaved={(file) => setData((current) => current && {
+        files: current.files.map((view) => view.name === "AGENTS.md" ? { ...view, file } : view),
+      })} onReload={() => void load()} onDirtyChange={onDirtyChange} /></div>
+      : agentsView ? <div className="persona-missing">
+        <EmptyState title="还没有 AGENTS.md" detail="写下这个 Agent 是谁、怎么说话、遇到什么情况怎么做。可以从模板开始。" />
+        <div className="form-actions">
+          <Button className="primary" disabled={creating} onClick={() => createAgents(AGENTS_TEMPLATE)}>用模板新建</Button>
+          <Button disabled={creating} onClick={() => createAgents("")}>新建空白文件</Button>
         </div>
-        {view.error ? <EmptyState title={`${view.name} 读取失败`} detail={view.error} />
-          : view.linkedTo && files.some((other) => other.name === view.linkedTo) ? <p className="rule-file-note">{view.name} 和 {view.linkedTo} 是同一个文件，在 {view.linkedTo} 里编辑即可。</p>
-          : view.file ? <div className="workspace-preview rule-file-editor"><TextFileEditor agentId={agentId} file={view.file} onSaved={(file) => replaceFile(view.name, file)} onReload={() => void load()} onDirtyChange={dirtyHandlers[view.name]} /></div>
-          : <div className="rule-file-missing">
-            <p><strong>{view.name}</strong> 还不存在。</p>
-            <div className="form-actions">
-              {view.name === "CLAUDE.md"
-                ? <Button className="primary" disabled={creating} onClick={() => void create(view.name, CLAUDE_IMPORTS_AGENTS)}>新建并引用 AGENTS.md</Button>
-                : <Button className="primary" disabled={creating} onClick={() => void create(view.name, AGENTS_TEMPLATE)}>用模板新建</Button>}
-              <Button disabled={creating} onClick={() => void create(view.name, "")}>新建空白文件</Button>
-            </div>
-            {view.name === "CLAUDE.md" ? <p className="rule-file-note">引用 AGENTS.md 后，换成 Claude runtime 也会沿用同一份规则，只需维护 AGENTS.md。</p> : null}
-          </div>}
-      </article>;
-    })}
+      </div>
+      : null}
   </section>;
 }
 
@@ -743,7 +744,7 @@ export function App() {
   const [configRefreshKey, setConfigRefreshKey] = useState(0);
   const [agentDirty, setAgentDirty] = useState(false);
   const [workspaceDirty, setWorkspaceDirty] = useState(false);
-  const [rulesDirty, setRulesDirty] = useState(false);
+  const [personaDirty, setPersonaDirty] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const scrollPositions = useRef(new Map<string, number>());
   const agents = polling.data?.agents || [];
@@ -773,9 +774,9 @@ export function App() {
   const allowContextChange = () => !agentDirty || window.confirm("Agent 配置尚未保存，确定放弃草稿吗？");
   const selectAgent = (agentId: string) => {
     if (!allowContextChange()) return;
-    if ((workspaceDirty || rulesDirty) && !window.confirm("文件改动尚未保存，确定放弃吗？")) return;
+    if ((workspaceDirty || personaDirty) && !window.confirm("文件改动尚未保存，确定放弃吗？")) return;
     setWorkspaceDirty(false);
-    setRulesDirty(false);
+    setPersonaDirty(false);
     setAgentDirty(false);
     writeRoute(agentId, tab);
     setMobileOpen(false);
@@ -824,12 +825,12 @@ export function App() {
       {notice ? <div className="notice" role="status">{notice}<Button aria-label="关闭提示" onClick={() => setNotice(null)}>×</Button></div> : null}
       {polling.loading && !polling.data ? <div className="page-loading"><RefreshCw className="spin" />加载 Agent 工作台…</div> : !selected ? <EmptyState title="还没有配置任何 Agent" detail="先运行 larkin setup。" /> : <>
         <AgentHeader agent={selected} />
-        <nav className="agent-tabs" aria-label={`${selected.displayName} 内容页签`} role="tablist">{AGENT_TABS.map((item) => <button key={item} type="button" role="tab" aria-selected={tab === item} className={tab === item ? "active" : ""} onClick={() => selectTab(item)}>{item === "overview" ? <Gauge /> : item === "conversation" ? <MessageSquareText /> : item === "configuration" ? <SlidersHorizontal /> : item === "rules" ? <ScrollText /> : item === "reminders" ? <Bell /> : item === "workspace" ? <Folder /> : <Logs />}{TAB_LABELS[item]}</button>)}</nav>
+        <nav className="agent-tabs" aria-label={`${selected.displayName} 内容页签`} role="tablist">{AGENT_TABS.map((item) => <button key={item} type="button" role="tab" aria-selected={tab === item} className={tab === item ? "active" : ""} onClick={() => selectTab(item)}>{item === "overview" ? <Gauge /> : item === "conversation" ? <MessageSquareText /> : item === "configuration" ? <SlidersHorizontal /> : item === "persona" ? <ScrollText /> : item === "reminders" ? <Bell /> : item === "workspace" ? <Folder /> : <Logs />}{TAB_LABELS[item]}</button>)}</nav>
         <div className={cn("agent-content", tab === "workspace" && "workspace-active")} key={selected.agentId}>
           <section role="tabpanel" hidden={tab !== "overview"}><Overview agent={selected} /></section>
           <section role="tabpanel" hidden={tab !== "conversation"}><Conversation agent={selected} /></section>
           <section role="tabpanel" hidden={tab !== "configuration"}><AgentConfiguration agentId={selected.agentId} readiness={selected.runtimeReadiness ?? null} onDirtyChange={setAgentDirty} refreshKey={configRefreshKey} /></section>
-          <section role="tabpanel" hidden={tab !== "rules"}><AgentRules agent={selected} onDirtyChange={setRulesDirty} /></section>
+          <section role="tabpanel" hidden={tab !== "persona"}><AgentPersona agent={selected} onDirtyChange={setPersonaDirty} /></section>
           <section role="tabpanel" hidden={tab !== "reminders"}><Reminders agent={selected} /></section>
           <section className="workspace-tab-panel" role="tabpanel" hidden={tab !== "workspace"}><Workspace agentId={selected.agentId} onDirtyChange={setWorkspaceDirty} /></section>
           <section role="tabpanel" hidden={tab !== "logs"}><LogsPanel agent={selected} /></section>

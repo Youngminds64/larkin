@@ -220,6 +220,13 @@ button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity:
 .workspace-editor { flex: 1; min-height: 360px; width: 100%; box-sizing: border-box; margin: 0; padding: 16px; border: 0; resize: none; outline: none; background: transparent; color: inherit; font: 11.5px/1.65 ui-monospace, monospace; tab-size: 2; }
 .workspace-preview pre { margin: 0; padding: 16px; white-space: pre-wrap; overflow-wrap: anywhere; font: 11.5px/1.65 ui-monospace, monospace; }
 .logs-section { max-width: 920px; }
+.persona-section { max-width: 920px; min-width: 0; padding: 18px 0; }
+.persona-section h3 { margin: 0; font: 600 17px Georgia, serif; }
+.persona-note { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 12px; padding: 9px 12px; border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--line)); border-radius: 9px; color: var(--warning); font-size: 11.5px; }
+.persona-editor, .persona-missing { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.persona-editor { max-height: 72dvh; }
+.persona-missing { padding: 4px 16px 16px; }
+.persona-missing .form-actions { justify-content: center; margin-top: 4px; }
 .error-stack { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
 .error-stack h4 { margin: 0 0 8px; font-size: 12px; }
 .error-stack > div { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 7px 0; color: var(--danger); font-size: 11px; }
