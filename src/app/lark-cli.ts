@@ -195,34 +195,6 @@ function policyFlagValue(argv: readonly string[], flag: string): string | null {
   return parsePolicyArgv(argv).flags.get(flag) ?? null;
 }
 
-const MEDIA_MSG_TYPES = new Set(["image", "file", "audio", "media", "sticker"]);
-
-function nativeFlagValue(argv: readonly string[], flag: string): string | null {
-  const nativeArgv = nativeArgvBeforeBoundary(argv);
-  for (let index = 0; index < nativeArgv.length; index += 1) {
-    if (nativeArgv[index] === flag) return nativeArgv[index + 1] ?? null;
-    if (nativeArgv[index].startsWith(`${flag}=`)) return nativeArgv[index].slice(flag.length + 1);
-  }
-  return null;
-}
-
-/**
- * Card reply mode (LARKIN_REPLY_MODE=card, set by the Runtime Host): the Host streams
- * the reply to the polled message as a card, so a model-driven text reply would
- * duplicate it. Attachment-only replies stay allowed because a card cannot carry files.
- */
-export function cardModeReplyDenial(argv: readonly string[], env: NodeJS.ProcessEnv): string | null {
-  if (env.LARKIN_REPLY_MODE !== "card") return null;
-  const parsed = parsePolicyArgv(argv);
-  if (parsed.help || !exactPath(parsed.commandArgv, ["im", "+messages-reply"])) return null;
-  const tokens = protectedSyntaxTokens(argv);
-  const textBody = tokens.includes("--text") || tokens.includes("--markdown")
-    || (tokens.includes("--content") && !MEDIA_MSG_TYPES.has(nativeFlagValue(argv, "--msg-type") ?? ""));
-  return textBody
-    ? "卡片回复模式：对当前消息的文字回复由 Larkin 以流式卡片自动发送，直接把回复写在你的正常输出里即可，不要用 +messages-reply 发文字；附件仍可用 --image/--file/--video/--audio 回复"
-    : null;
-}
-
 export function classifyLarkCliCommand(argv: readonly string[]): LarkCliCommandDecision {
   const parsed = parsePolicyArgv(argv);
   if (parsed.help) return { kind: "passthrough" };
@@ -1214,11 +1186,6 @@ export function runLarkCli(
   const decision = classifyLarkCliCommand(effectiveArgv);
   if (decision.kind === "denied") {
     io.stderr(`lark-cli: ${decision.reason}\n`);
-    return 2;
-  }
-  const cardModeDenial = cardModeReplyDenial(effectiveArgv, env);
-  if (cardModeDenial) {
-    io.stderr(`lark-cli: ${cardModeDenial}\n`);
     return 2;
   }
   const privateEnv = managedLarkCliEnv(agent, { ...env, LARKIN_AGENT_ID: agent.agentId });

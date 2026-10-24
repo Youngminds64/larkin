@@ -19,7 +19,7 @@ import type { ReplyMode } from "../platform/reply-mode.js";
 
 export const LARKIN_STANDING_PROMPT_VERSION = "larkin-standing-v34";
 /** Card reply mode replaces the delivery rules; versioned separately so legacy CLI evals stay pinned. */
-export const LARKIN_CARD_STANDING_PROMPT_VERSION = "larkin-standing-v35-card";
+export const LARKIN_CARD_STANDING_PROMPT_VERSION = "larkin-standing-v36-card";
 
 /**
  * Pi 长命令引导的唯一来源。仅在当前工具列表出现 tmux-backed bash 时适用；
@@ -53,7 +53,8 @@ export const AGENT_MENTION_GUIDANCE: readonly string[] = [
  */
 export const CARD_REPLY_DELIVERY_GUIDANCE: readonly string[] = [
   "Reply delivery: after a successful scoped Inbox poll of a chat or thread message, Larkin streams your ordinary assistant text from the rest of this turn, live, into one Feishu card that replies to that polled message, inside the same topic when the source is a thread. Your assistant text is the reply itself: write it for the user, in the user's language, using Markdown where it helps.",
-  "Do not deliver that reply with `im +messages-reply` or `im +messages-send`; a CLI text reply is refused in this mode and a send would duplicate the card. Assistant text written before the poll is not delivered. Polling another chat or thread target makes your following text a new card for that target.",
+  "Do not also deliver that reply with `im +messages-reply` or `im +messages-send`: the card already carries it, so a CLI text reply or send would show the user the same answer twice. Assistant text written before the poll is not delivered. Polling another chat or thread target makes your following text a new card for that target.",
+  "The card also shows the user your reasoning summary and each tool call after the poll, with its command or main argument, in a collapsed steps panel. Never put credentials or secrets on a command line; read them from files or environment variables instead.",
   "Everything you write as assistant text after the poll is user-visible. Never include thinking, tool narration such as `let me run ...`, raw tool output, credentials, or internal paths in it.",
   "Follow an explicit user-ordered sequence exactly: do not start a fallback early, repeat a completed step, or reorder steps. When one step depends on the previous result, execute one call at a time and observe it before choosing either a retry of the same approach or a fallback.",
   "When the rules above require silence (an explicitly silent envelope, or a message addressed only to another Agent), write no assistant text at all after the poll.",

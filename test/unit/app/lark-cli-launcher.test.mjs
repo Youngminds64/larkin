@@ -983,17 +983,3 @@ test("cursor advancement between attempts keeps the derived idempotency key stab
     assert.equal(forced.filter((argument) => argument === "--idempotency-key").length, 1);
   } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
 });
-
-test("card reply mode denies model-driven text replies but keeps attachments and sends", async () => {
-  const { cardModeReplyDenial } = await import("../../../dist/app/lark-cli.mjs");
-  const card = { LARKIN_REPLY_MODE: "card" };
-  const reply = ["im", "+messages-reply", "--message-id", "om_abc"];
-  assert.match(cardModeReplyDenial([...reply, "--text", "hi"], card) ?? "", /流式卡片/);
-  assert.match(cardModeReplyDenial([...reply, "--markdown", "**hi**"], card) ?? "", /流式卡片/);
-  assert.match(cardModeReplyDenial([...reply, "--msg-type", "post", "--content", "{}"], card) ?? "", /流式卡片/);
-  assert.equal(cardModeReplyDenial([...reply, "--image", "./a.png"], card), null);
-  assert.equal(cardModeReplyDenial([...reply, "--msg-type", "file", "--content", "{}"], card), null);
-  assert.equal(cardModeReplyDenial(["im", "+messages-send", "--chat-id", "oc_x", "--text", "hi"], card), null);
-  assert.equal(cardModeReplyDenial([...reply, "--text", "hi"], { LARKIN_REPLY_MODE: "cli" }), null);
-  assert.equal(cardModeReplyDenial([...reply, "--text", "hi"], {}), null);
-});

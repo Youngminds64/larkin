@@ -186,6 +186,33 @@ function parseJson(line: string): Record<string, any> | null {
   } catch { return null; }
 }
 
+/** The most telling single argument of a tool call, for the streaming card's step list. */
+function toolInputSummary(input: unknown): string {
+  if (typeof input === "string") return input;
+  if (!input || typeof input !== "object") return "";
+  const record = input as Record<string, unknown>;
+  for (const key of ["command", "cmd", "file_path", "path", "pattern", "query", "url", "description", "prompt"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value;
+    if (Array.isArray(value) && value.every((part) => typeof part === "string")) return value.join(" ");
+  }
+  return "";
+}
+
+/** Display name and argument for a Codex app-server tool item; null for messages and reasoning. */
+function codexToolDisplay(item: Record<string, any> | undefined): { name: string; detail: string } | null {
+  if (!item || typeof item.type !== "string") return null;
+  switch (item.type) {
+    case "commandExecution": return { name: "执行命令", detail: toolInputSummary({ command: item.command }) };
+    case "mcpToolCall": return { name: [item.server, item.tool].filter(Boolean).join("/") || "MCP 工具", detail: toolInputSummary(item.arguments) };
+    case "fileChange": return { name: "修改文件", detail: Array.isArray(item.changes)
+      ? item.changes.map((change: { path?: unknown }) => String(change?.path ?? "")).filter(Boolean).join(", ") : "" };
+    case "webSearch": return { name: "网页搜索", detail: typeof item.query === "string" ? item.query : "" };
+    case "dynamicToolCall": return { name: String(item.tool || "工具"), detail: toolInputSummary(item.arguments) };
+    default: return null;
+  }
+}
+
 function attachLines(stream: ReadableLike | null, listener: (message: Record<string, any>) => void): void {
   if (!stream) return;
   const lines = createInterface({ input: stream });
@@ -356,6 +383,15 @@ class CodexSession extends EventSession {
       this.emit({ type: "turn-end", ...(this.threadId ? { sessionId: this.threadId } : {}), ...(turnId ? { turnId } : {}) });
     } else if (message.method === "item/started" && message.params?.item?.type === "agentMessage") {
       this.textBlockPending = true;
+    } else if (message.method === "item/started" && codexToolDisplay(message.params?.item)) {
+      const tool = codexToolDisplay(message.params.item)!;
+      this.emit({ type: "activity", activity: "tool", name: tool.name, ...(tool.detail ? { text: tool.detail } : {}),
+        ...(message.params.item.id ? { toolId: String(message.params.item.id) } : {}) });
+    } else if (message.method === "item/completed" && codexToolDisplay(message.params?.item)) {
+      const item = message.params.item;
+      const status = String(item.status || "completed").toLowerCase();
+      const ok = status !== "failed" && status !== "declined" && (item.exitCode === undefined || item.exitCode === null || item.exitCode === 0);
+      this.emit({ type: "tool-result", ok, ...(item.id ? { toolId: String(item.id) } : {}) });
     } else if (message.method === "item/agentMessage/delta" && message.params?.delta) {
       this.emit({ type: "activity", activity: "text", text: String(message.params.delta) });
       this.emit({ type: "text-delta", text: String(message.params.delta), ...(this.textBlockPending ? { newBlock: true } : {}) });
@@ -526,7 +562,11 @@ class ClaudeSession extends EventSession {
       for (const block of message.message?.content ?? []) {
         if (block.type === "text" && block.text) this.emit({ type: "activity", activity: "text", text: String(block.text) });
         if (block.type === "thinking" && block.thinking) this.emit({ type: "activity", activity: "thinking", text: String(block.thinking) });
-        if (block.type === "tool_use") this.emit({ type: "activity", activity: "tool", name: String(block.name || "tool") });
+        if (block.type === "tool_use") {
+          const detail = toolInputSummary(block.input);
+          this.emit({ type: "activity", activity: "tool", name: String(block.name || "tool"), ...(detail ? { text: detail } : {}),
+            ...(block.id ? { toolId: String(block.id) } : {}) });
+        }
       }
       const next = this.gated.shift();
       if (next) {
@@ -543,6 +583,12 @@ class ClaudeSession extends EventSession {
       } else if (streamEvent?.type === "content_block_delta" && streamEvent.delta?.type === "text_delta" && streamEvent.delta.text) {
         this.emit({ type: "text-delta", text: String(streamEvent.delta.text), ...(this.textBlockPending ? { newBlock: true } : {}) });
         this.textBlockPending = false;
+      }
+    } else if (message.type === "user" && Array.isArray(message.message?.content)) {
+      for (const block of message.message.content) {
+        if (block?.type === "tool_result") {
+          this.emit({ type: "tool-result", ok: block.is_error !== true, ...(block.tool_use_id ? { toolId: String(block.tool_use_id) } : {}) });
+        }
       }
     } else if (message.type === "result") {
       this.busy = false;
@@ -774,13 +820,17 @@ class PiSession extends EventSession {
         this.toolCallOpen = true;
         this.emit({ type: "runtime-observation", runtime: "pi", distribution: this.distribution, phase: "tool_call" });
       }
-      this.emit({ type: "activity", activity: "tool", name: String(event.toolName || "tool") });
+      const detail = toolInputSummary(event.args);
+      this.emit({ type: "activity", activity: "tool", name: String(event.toolName || "tool"), ...(detail ? { text: detail } : {}),
+        ...(event.toolCallId ? { toolId: String(event.toolCallId) } : {}) });
     }
     else if (event?.type === "tool_execution_end") {
       if (this.toolCallOpen) {
         this.toolCallOpen = false;
         this.emit({ type: "runtime-observation", runtime: "pi", distribution: this.distribution, phase: "tool_result" });
       }
+      this.emit({ type: "tool-result", ok: event.isError !== true, ...(event.toolCallId ? { toolId: String(event.toolCallId) } : {}),
+        ...(event.toolName ? { name: String(event.toolName) } : {}) });
     }
     else if (event?.type === "message_update" && event.assistantMessageEvent?.delta) {
       if (!this.firstOutputObserved) {
