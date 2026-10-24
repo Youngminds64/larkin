@@ -129,7 +129,7 @@ describe("Agent-centric dashboard workbench", () => {
     await screen.findByRole("heading", { level: 1, name: "Builder" });
     expect(screen.getAllByText("v0.2.20")).toHaveLength(2);
     expect(container.querySelector(".app-topbar strong")).toHaveTextContent(/^Larkin v0\.2\.20$/);
-    expect(screen.getByRole("tab", { name: "人设与能力" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "设定" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByText("Agent workbench")).not.toBeInTheDocument();
     const guidance = await screen.findByText(/更多选项可以让 Agent 运行/);
     expect(guidance).toBeVisible();
@@ -319,7 +319,7 @@ describe("Agent-centric dashboard workbench", () => {
     await userEvent.click(screen.getByRole("tab", { name: "动态" }));
     await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: "auto" }));
     scrollY = 88;
-    await userEvent.click(screen.getByRole("tab", { name: "人设与能力" }));
+    await userEvent.click(screen.getByRole("tab", { name: "设定" }));
     await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith({ top: 420, behavior: "auto" }));
   });
 
@@ -682,7 +682,7 @@ describe("Agent-centric dashboard workbench", () => {
     expect(screen.getByRole("button", { name: "载入最新版本" })).toBeVisible();
   });
 
-  it("creates AGENTS.md from a template in 人设与能力 and adds a CLAUDE.md that imports it", async () => {
+  it("creates AGENTS.md from a template in 设定 and adds a CLAUDE.md that imports it", async () => {
     let rules = missingRules();
     const creates: Array<Record<string, unknown>> = [];
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -702,7 +702,7 @@ describe("Agent-centric dashboard workbench", () => {
     }));
     render(<App />);
     await screen.findByRole("heading", { level: 1, name: "Builder" });
-    await userEvent.click(screen.getByRole("tab", { name: "人设与能力" }));
+    await userEvent.click(screen.getByRole("tab", { name: "设定" }));
     await userEvent.click(await screen.findByRole("button", { name: "用模板新建" }));
     await waitFor(() => expect(creates.map((body) => body.name)).toEqual(["AGENTS.md", "CLAUDE.md"]));
     expect(creates[0]).toMatchObject({ agentId: "cli_AgentB2", content: expect.stringContaining("# 角色") });
@@ -737,7 +737,7 @@ describe("Agent-centric dashboard workbench", () => {
       }));
       render(<App />);
       await screen.findByRole("heading", { level: 1, name: "Builder" });
-      await userEvent.click(screen.getByRole("tab", { name: "人设与能力" }));
+      await userEvent.click(screen.getByRole("tab", { name: "设定" }));
       expect(await screen.findByText(/还没有 CLAUDE\.md，这份设定不会被读取/)).toBeVisible();
       await userEvent.click(screen.getByRole("button", { name: "新建 CLAUDE.md 并引用 AGENTS.md" }));
       await waitFor(() => expect(creates).toEqual([{ agentId: "cli_AgentB2", name: "CLAUDE.md", content: "@AGENTS.md\n" }]));
@@ -745,7 +745,7 @@ describe("Agent-centric dashboard workbench", () => {
     } finally { agents[1].runtime = prior; }
   });
 
-  it("lists capabilities by source in 人设与能力 and says when the runtime lacks a kind", async () => {
+  it("lists capabilities by source in 设定 and says when the runtime lacks a kind", async () => {
     const capabilities: Record<string, unknown> = {
       cli_AgentB2: { runtime: "codex", unsupported: [], items: [
         { kind: "skill", source: "global", name: "lark-im", description: "收发飞书消息", location: "~/.agents/skills/lark-im/SKILL.md", status: "ok", detail: null },
@@ -845,7 +845,7 @@ describe("Agent-centric dashboard workbench", () => {
       expect(await screen.findByText(/^Readiness unauthenticated · codex is installed but not logged in · Run `codex login`/)).toBeVisible();
       await userEvent.click(screen.getByRole("tab", { name: "高级" }));
       expect(screen.getByText(/^unauthenticated · codex is installed but not logged in · Run `codex login`/)).toBeVisible();
-      await userEvent.click(screen.getByRole("tab", { name: "人设与能力" }));
+      await userEvent.click(screen.getByRole("tab", { name: "设定" }));
       await userEvent.selectOptions(await screen.findByLabelText("Runtime"), "claude");
       await userEvent.click(screen.getByRole("button", { name: "保存并应用" }));
       const feedback = await screen.findByRole("status");
