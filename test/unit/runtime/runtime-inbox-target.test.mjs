@@ -126,9 +126,7 @@ test("production HostEnvelopeProjector emits source-specific reminder and redeli
 test("persistence rejects legacy and malformed targets and leaves durable old rows untouched", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-inbox-target-rejection-"));
   try {
-    const store = createAgentStateStore(root, "cli_targetStoreA1", {
-      inspectProcess: (pid) => ({ ok: true, dead: false, startToken: `test-${pid}` }),
-    });
+    const store = createAgentStateStore(root, "cli_targetStoreA1");
     store.appendNdjson("inbox", { message_id: "om_valid_before_rejection", target: "chat:c123" });
     const inboxBeforeAppendRejection = fs.readFileSync(store.paths.inbox);
     const stateBeforeAppendRejection = fs.readFileSync(store.paths.inboxState);
@@ -218,9 +216,7 @@ test("issue 124 former split envelope fails while the exact persisted canonical 
 
 test("Runtime final inputs use exact targets and malformed deliveries fail closed before prompt or ledger acceptance", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-runtime-target-defense-"));
-  const store = createAgentStateStore(root, "cli_targetDefenseA1", {
-    inspectProcess: (pid) => ({ ok: true, dead: false, startToken: `test-${pid}` }),
-  });
+  const store = createAgentStateStore(root, "cli_targetDefenseA1");
   const session = new FakeSession();
   const events = [];
   const host = createRuntimeHost({
