@@ -85,7 +85,8 @@ button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity:
 .ui-badge.warning { border-color: color-mix(in srgb, var(--warning) 55%, var(--line)); color: var(--warning); }
 .ui-badge.accent, .ui-badge.danger-badge { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); color: var(--accent); }
 .stale-banner, .notice { margin: 16px 28px 0; display: flex; align-items: center; gap: 8px; border: 1px solid color-mix(in srgb, var(--warning) 50%, var(--line)); border-radius: 9px; padding: 8px 11px; background: color-mix(in srgb, var(--warning) 7%, var(--panel)); color: var(--warning); font-size: 12px; }
-.stale-banner .ui-button, .notice .ui-button { margin-left: auto; min-height: 28px; padding-block: 4px; }
+.stale-banner .ui-button, .notice .ui-button { margin-left: auto; min-height: 28px; padding-block: 4px; white-space: nowrap; }
+.sheet-content .stale-banner { margin: 0 0 14px; }
 .notice { border-color: var(--line); background: var(--panel); color: var(--subtle); }
 
 .agent-header { position: sticky; top: 64px; z-index: 15; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 24px 30px 18px; background: color-mix(in srgb, var(--paper) 96%, transparent); backdrop-filter: blur(14px); }

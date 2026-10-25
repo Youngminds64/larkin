@@ -67,7 +67,9 @@ if (preparedDashboard.action === "reuse") {
 const dashboardLaunchLock = { release: preparedDashboard.release };
 
 const csrfCapability = crypto.randomBytes(32).toString("base64url");
-const HTML = renderDashboardHtml(PACKAGE_VERSION, DASHBOARD_BUILD_VERSION, BUILD_FINGERPRINT, csrfCapability);
+// Public per-process id: a page compares it with /api/status to notice that the dashboard restarted.
+const dashboardInstance = crypto.randomBytes(8).toString("hex");
+const HTML = renderDashboardHtml(PACKAGE_VERSION, DASHBOARD_BUILD_VERSION, BUILD_FINGERPRINT, csrfCapability, dashboardInstance);
 const piModelResolver = createPiModelDirectoryResolver();
 const configController = createDashboardConfigController({ csrfCapability, piModelDirectoryResolver: piModelResolver });
 const avatarController = createDashboardAvatarController({ resolveSource: resolveDashboardAvatarSource });
@@ -94,7 +96,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.url === "/api/status") {
     let body;
-    try { body = JSON.stringify(await collectStatus({ piModelResolver })); }
+    try { body = JSON.stringify({ ...await collectStatus({ piModelResolver }), dashboardInstance }); }
     catch (error) { res.writeHead(500, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) })); return; }
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(body);

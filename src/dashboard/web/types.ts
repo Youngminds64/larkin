@@ -86,6 +86,8 @@ export interface StatusResponse {
   version: string;
   packageVersion: string;
   buildFingerprint: string;
+  /** Identifies the dashboard process; it changes on every restart. */
+  dashboardInstance?: string;
   generatedAt: string;
   daemon: { running: boolean; state: string; reason: string | null; uptimeSec: number | null; agents: string[] };
   agents: DashboardAgent[];
@@ -160,6 +162,7 @@ declare global {
       dashboardVersion: string;
       buildFingerprint: string;
       csrfCapability: string;
+      dashboardInstance?: string;
     };
   }
 }
