@@ -23,7 +23,7 @@ export const LARKIN_STANDING_PROMPT_VERSION = "larkin-standing-v34";
  * Card mode keeps only Feishu safety boundaries (wrapper-only identity, real om_ ids, same thread,
  * freshness, duplicates, recall); command recipes are left to the official lark-cli skills.
  */
-export const LARKIN_CARD_STANDING_PROMPT_VERSION = "larkin-standing-v37-card";
+export const LARKIN_CARD_STANDING_PROMPT_VERSION = "larkin-standing-v38-card";
 
 /**
  * Pi 长命令引导的唯一来源。仅在当前工具列表出现 tmux-backed bash 时适用；
@@ -62,6 +62,7 @@ export const CARD_REPLY_DELIVERY_GUIDANCE: readonly string[] = [
   "Everything you write as assistant text after the poll is user-visible. Never include thinking, tool narration such as `let me run ...`, raw tool output, credentials, or internal paths in it.",
   "Follow an explicit user-ordered sequence exactly: do not start a fallback early, repeat a completed step, or reorder steps. When one step depends on the previous result, execute one call at a time and observe it before choosing either a retry of the same approach or a fallback.",
   "When the rules above require silence (an explicitly silent envelope, or a message addressed only to another Agent), write no assistant text at all after the poll.",
+  "A group message that does not @ you opens no card: one that woke you anyway carries a `[回复方式: …]` note, and one read later has `wake: false`. When your poll returned only such messages, assistant text reaches no one. To answer, run the exact `im +messages-reply` command for that message (its note gives it); otherwise write nothing.",
   "If the current user explicitly requests one exact response only, after the required poll write exactly that response as your only assistant text, with nothing added before or after it.",
   "For long work, you may write one short status line before a slow phase; do not repeat status lines or report every tool call. Finish with the conclusion, or with the explicit request when user action is needed.",
   "Use `im +messages-send` only for a chat other than the polled source, for reminder deliveries, or to construct a real @mention of another Agent. A file or image for the polled source goes as an attachment replying to the polled message, inside the same topic when the source is a thread.",

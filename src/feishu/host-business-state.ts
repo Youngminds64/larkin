@@ -417,7 +417,7 @@ export class HostEnvelopeProjector {
     return {
       ...envelope,
       reply_by: "command",
-      content: `${envelope.content}\n[回复方式: 这条消息没有 @ 你。要回复就运行 ${reply}，回复只通过这条命令发出。]`,
+      content: `${envelope.content}\n[回复方式: 这条消息没有 @ 你，不会开卡片，你写的文字不会发给任何人。要回复就运行 ${reply}；不需要回复就什么都不写。]`,
     };
   }
 
