@@ -485,7 +485,8 @@ test("Codex sandbox defaults to danger-full-access and workspace-write keeps net
     model_reasoning_effort: "medium",
     sandbox_workspace_write: {
       network_access: true,
-      writable_roots: ["/tmp/larkin-root/state/agents/cli_test", "/tmp/larkin-root/telemetry/spool"],
+      // Roots are resolved, so Windows turns these into drive-qualified paths.
+      writable_roots: ["/tmp/larkin-root/state/agents/cli_test", "/tmp/larkin-root/telemetry/spool"].map((root) => path.resolve(root)),
     },
   });
   assert.ok(!restricted.config.sandbox_workspace_write.writable_roots.includes("/tmp/larkin-root"));
