@@ -77,8 +77,8 @@ test("card prompt states once how to answer a group message that does not @ the 
   for (const fact of ['`mentions_you: false`', "reaches no one", "If you decide to answer", "`--reply-in-thread` to start a thread on that message", "main chat stream", "end the turn silently"]) {
     assert.ok(rule.includes(fact), `command-reply rule lost: ${fact}`);
   }
-  // The official lark-im skill asks to confirm every reply with the user; the Inbox already routed this message.
-  assert.ok(card.includes("A polled Inbox message is already routed to you, so reply to it directly"), "card prompt lost the reply authorization");
+  // The official lark-im skill asks to confirm every reply with the user; an Inbox message needs no such step.
+  assert.ok(card.includes("Reply to a polled Inbox message directly."), "card prompt lost the reply authorization");
   assert.ok(card.includes("a thread (Feishu 话题)"), "card prompt lost the thread definition");
   assert.ok(card.includes("is the main chat stream (the `chat:` target)"), "card prompt lost the main chat stream definition");
   assert.ok(!card.includes("回复方式"), "card prompt still points at the removed per-message note");
