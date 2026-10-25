@@ -52,9 +52,9 @@ test("global reply mode is stored once, projected onto every Agent and requires 
 test("a per-session reply mode overrides the prompt builder default", () => {
   const builder = new ContextPromptBuilder({ replyMode: "card" });
   const input = { agentId: APP, runtime: "codex" };
-  assert.equal(builder.build(input).version, "larkin-standing-v40-card");
+  assert.equal(builder.build(input).version, "larkin-standing-v41-card");
   assert.equal(builder.build({ ...input, replyMode: "cli" }).version, "larkin-standing-v34");
-  assert.equal(new ContextPromptBuilder().build({ ...input, replyMode: "card" }).version, "larkin-standing-v40-card");
+  assert.equal(new ContextPromptBuilder().build({ ...input, replyMode: "card" }).version, "larkin-standing-v41-card");
 });
 
 test("card prompt drops Feishu reply recipes but keeps the safety boundaries", () => {
@@ -65,7 +65,7 @@ test("card prompt drops Feishu reply recipes but keeps the safety boundaries", (
     assert.ok(!card.includes(recipe), `card prompt still carries recipe: ${recipe}`);
     assert.ok(cli.includes(recipe), `cli prompt lost recipe: ${recipe}`);
   }
-  for (const boundary of ["never invoke bare `lark-cli`", "beginning with `om_`", "`rem_`, `redeliver_`", "never the whole chat",
+  for (const boundary of ["no bare `lark-cli`", "beginning with `om_`", "`rem_`, `redeliver_`", "never the whole chat",
     "`duplicate: true`", "Freshness never blocks a write", "stays in that thread", "im messages delete --message-id"]) {
     assert.ok(card.includes(boundary), `card prompt lost boundary: ${boundary}`);
   }
@@ -82,4 +82,20 @@ test("card prompt states once how to answer a group message that does not @ the 
   assert.ok(card.includes("a thread (Feishu 话题)"), "card prompt lost the thread definition");
   assert.ok(card.includes("is the main chat stream (the `chat:` target)"), "card prompt lost the main chat stream definition");
   assert.ok(!card.includes("回复方式"), "card prompt still points at the removed per-message note");
+});
+
+test("card prompt states each rule once and keeps eval-only wording out", () => {
+  const input = { agentId: APP, runtime: "codex" };
+  const card = new ContextPromptBuilder({ replyMode: "card" }).build(input).content;
+  const cli = new ContextPromptBuilder({ replyMode: "cli" }).build(input).content;
+  for (const evalOnly of ["这是独立用例", "There is no cooldown or frequency gate."]) {
+    assert.ok(!card.includes(evalOnly), `card prompt still carries: ${evalOnly}`);
+    assert.ok(cli.includes(evalOnly), `cli prompt lost its pinned wording: ${evalOnly}`);
+  }
+  assert.equal(card.split("`--as user`").length - 1, 1, "the identity hard limits appear once");
+  assert.ok(card.includes("`mentions_you: true`"), "card replies are keyed on the mention field");
+  const mentions = card.split("\n").find((line) => line.startsWith("Mentions:")) ?? "";
+  for (const fact of ["a person or an Agent", "`<at user_id=\\\"<open_id>\\\"></at>`", "card text and a plain `@name` read as ordinary words"]) {
+    assert.ok(mentions.includes(fact.replaceAll("\\\"", "\"")), `mention rule lost: ${fact}`);
+  }
 });

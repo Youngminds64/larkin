@@ -401,18 +401,13 @@ export class HostEnvelopeProjector {
     }
     const names = options.names || {};
     if (!names[event.sender_id]) this.noteUnknownSender(agent, event.chat_id, event.sender_id);
-    const envelope = createMessageEnvelope({
+    return createMessageEnvelope({
       agent,
       event: { ...event, message_id: messageId },
       seq: this.nextSequence(agent.agentId),
       names,
       signature: options.signature,
     });
-    // A person's group message without an @ opens no reply card, whether it woke the Agent (a
-    // free-policy group) or is read later. The standing prompt says once how to answer it; the
-    // envelope carries only this fact, so a busy group does not repeat that rule per message.
-    const unaddressed = event.chat_type === "group" && !event._sender_is_bot && !event._mentioned_bot && !event._mention_all;
-    return unaddressed ? { ...envelope, mentions_you: false } : envelope;
   }
 
   createReminderEnvelope(
@@ -491,7 +486,7 @@ export class HostEnvelopeProjector {
       sender_type: "system" as const,
       channel_type: "dm" as const,
       channel_name: "system" as const,
-      content: `[启动补投] 服务重启期间有 ${wakeCount} 条本应唤醒你的消息未被读取（可能包含用户消息、@提及或定时提醒）。请先用 ${this.agentCommand("inbox check")} 看目标摘要，再用 ${this.agentCommand("inbox poll")} 领取完整消息；仅当 message_id 以 om_ 开头时才用 ${this.larkCommand("im +messages-reply")}，系统 rem_/redeliver_ ID 不可回复；有 chat_id 时可用 ${this.larkCommand("im +messages-send")}，否则先查询确认目标，禁止猜测。`,
+      content: `[启动补投] 服务重启期间有 ${wakeCount} 条本应唤醒你的消息还没读（用户消息、@ 或提醒）。先用 ${this.agentCommand("inbox check")} 看有哪些目标，再用 ${this.agentCommand("inbox poll --target <target>")} 逐个领取并处理。`,
       timestamp: this.now().toISOString(),
       thread_id: null,
     };
