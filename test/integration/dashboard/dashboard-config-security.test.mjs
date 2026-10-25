@@ -70,7 +70,9 @@ test("dashboard config API is sanitized, same-origin/CSRF protected, bounded, an
       await fetch(`${base}/api/config`, { method: "PATCH", headers: { "Content-Type": "application/json", Origin: base, "X-Larkin-CSRF": csrf }, body: JSON.stringify({ operation: "write-raw", serverId: "replace" }) }),
       await fetch(`${base}/api/config`, { method: "PATCH", headers: { "Content-Type": "application/json", Origin: base, "X-Larkin-CSRF": csrf }, body: JSON.stringify({ operation: "set-global-mention", value: "free", padding: "x".repeat(17_000) }) }),
     ];
-    assert.deepEqual(rejected.map((response) => response.status), [400, 400, 400, 400, 400, 400]);
+    // Forbidden callers get 403, an oversized body 413, a malformed request 400; a wrong capability is a stale page.
+    assert.deepEqual(rejected.map((response) => response.status), [403, 403, 400, 403, 400, 413]);
+    assert.equal((await rejected[3].json()).code, "stale_page");
     assert.equal(fs.readFileSync(path.join(root, "config.json"), "utf8"), before);
 
     const accepted = await fetch(`${base}/api/config`, { method: "PATCH", headers: { "Content-Type": "application/json", Origin: base, "X-Larkin-CSRF": csrf }, body: raw });
@@ -175,7 +177,7 @@ test("removed pi-auth routes 404 like unknown routes; remaining config routes ke
       await fetch(`${base}/api/config`, { method: "PATCH", headers: { "Content-Type": "application/json", Origin: base, "X-Larkin-CSRF": "wrong" }, body: raw }),
       await fetch(`${base}/api/config`, { method: "PATCH", headers: { "Content-Type": "application/json", Origin: base, "X-Larkin-CSRF": csrf }, body: JSON.stringify({ operation: "set-global-mention", value: "free", padding: "x".repeat(17_000) }) }),
     ];
-    assert.deepEqual(rejected.map((response) => response.status), [400, 400, 400, 400]);
+    assert.deepEqual(rejected.map((response) => response.status), [403, 403, 403, 413]);
     for (const response of rejected) {
       assert.equal(response.headers.get("cache-control"), "no-store");
     }
