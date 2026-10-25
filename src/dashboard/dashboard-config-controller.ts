@@ -423,7 +423,7 @@ export function dashboardError(error: unknown, fallback: string): { status: numb
   const message = error instanceof Error ? error.message : String(error);
   console.warn(`[dashboard] ${fallback}: ${message}`);
   const reply = (status: number, code: string, text: string) => ({ status, body: { error: text, code } });
-  if (/^(?:csrf|capability) rejected$/.test(message)) return reply(403, "stale_page", "larkin 已重启，这个页面已过期。刷新页面后再操作。");
+  if (/^(?:csrf|capability) rejected$/.test(message)) return reply(403, "stale_page", "这个页面已过期，刷新页面后再操作。");
   if (/^(?:invalid host|same-origin required)$/.test(message)) return reply(403, "forbidden", "请在本机用 http://localhost 打开 dashboard。");
   if (message === "request too large") return reply(413, "too_large", "内容太大，无法保存。");
   if (message === "unknown agent") return reply(404, "unknown_agent", "这个 Agent 已不存在，刷新页面看看。");

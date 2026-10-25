@@ -349,12 +349,12 @@ describe("Agent-centric dashboard workbench", () => {
     await waitFor(() => expect(applied).toEqual(["cli_AgentB2"]));
   });
 
-  it("keeps the draft and offers a reload when a save is rejected because larkin restarted", async () => {
+  it("tells the user to refresh and keeps the draft when a save is rejected as coming from an expired page", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), "http://localhost");
       if (url.pathname === "/api/status") return ok(status);
       if (url.pathname === "/api/config" && init?.method === "PATCH") {
-        return Promise.resolve({ ok: false, status: 403, json: async () => ({ error: "larkin 已重启，这个页面已过期。刷新页面后再操作。", code: "stale_page" }) });
+        return Promise.resolve({ ok: false, status: 403, json: async () => ({ error: "这个页面已过期，刷新页面后再操作。", code: "stale_page" }) });
       }
       if (url.pathname === "/api/config") return ok(config(url.searchParams.get("agent") || undefined));
       if (url.pathname === "/api/workspace") return ok({ kind: "directory", path: "", parent: null, entries: [] });
@@ -368,10 +368,7 @@ describe("Agent-centric dashboard workbench", () => {
     const dialog = await screen.findByRole("dialog");
     await userEvent.selectOptions(within(dialog).getByLabelText("真人群消息默认策略"), "require");
     await userEvent.click(within(dialog).getByRole("button", { name: "保存全局设置" }));
-    const banner = await within(dialog).findByRole("alert");
-    expect(banner).toHaveTextContent("larkin 已重启，这个页面已过期");
-    expect(within(banner).getByRole("button", { name: "刷新页面" })).toBeInTheDocument();
-    expect(within(dialog).getByRole("status")).toHaveTextContent("刷新页面后再操作");
+    await waitFor(() => expect(within(dialog).getByRole("status")).toHaveTextContent("这个页面已过期，刷新页面后再操作"));
     expect(within(dialog).getByLabelText("真人群消息默认策略")).toHaveValue("require");
   });
 
