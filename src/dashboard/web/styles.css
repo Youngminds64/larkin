@@ -234,6 +234,7 @@ button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity:
 .persona-switch { display: inline-flex; flex-wrap: wrap; gap: 3px; margin-bottom: 16px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 .persona-switch button { min-height: 30px; display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 7px; padding: 5px 12px; background: transparent; color: var(--ink); font-size: 12px; font-weight: 600; }
 .persona-switch button.active { background: var(--accent-soft); color: var(--accent); }
+.standing-prompt .capability-detail-badges { margin-bottom: 10px; }
 .persona-switch small { color: var(--subtle); font-weight: 400; }
 .capability-layout { display: grid; grid-template-columns: minmax(0, 3fr) minmax(220px, 2fr); gap: 16px; align-items: start; }
 .capability-groups { min-width: 0; display: grid; gap: 16px; }

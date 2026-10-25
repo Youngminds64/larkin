@@ -123,6 +123,8 @@ interface InboxSourceState {
   message_id: string;
   seq: number;
   kind?: string;
+  /** No message in the polled batch addressed the Agent, so it replies by command and no card opens. */
+  reply_by?: "command";
 }
 
 interface InboxReminderState {
@@ -228,7 +230,8 @@ function normalizeInboxState(value: unknown): InboxStateFile {
       && (/^om_[A-Za-z0-9_-]+$/.test(row.message_id) || (row.target.startsWith("document-comment:") && /^doc_comment_[A-Za-z0-9_-]+$/.test(row.message_id)))
       && validSequence(row.seq)) {
       state.last_source = { target: row.target, message_id: row.message_id, seq: row.seq,
-        ...(typeof row.kind === "string" && row.kind ? { kind: row.kind } : {}) };
+        ...(typeof row.kind === "string" && row.kind ? { kind: row.kind } : {}),
+        ...(row.reply_by === "command" ? { reply_by: "command" as const } : {}) };
     }
   }
   if (raw.drafts && typeof raw.drafts === "object" && !Array.isArray(raw.drafts)) {
@@ -1110,8 +1113,14 @@ export class AgentStateStore {
           : [];
       });
       const userTargets = new Set(userSources.map((source) => source.target));
-      if (userSources.length && userTargets.size === 1) state.last_source = userSources.at(-1);
-      else delete state.last_source;
+      if (userSources.length && userTargets.size === 1) {
+        // Only a user message that addressed the Agent opens a reply card. A message that never woke it
+        // (read later, e.g. by an Inbox audit) carries no `wake` field at all, and one that woke it without
+        // an @ is answered by command; the audit reminder itself is not a user message and does not count.
+        const addressed = envelopes.some((envelope) => envelope.wake === true && envelope.reply_by !== "command"
+          && isUserDeliveryTarget(targetKeyOfInboxEnvelope(envelope)));
+        state.last_source = { ...userSources.at(-1)!, ...(addressed ? {} : { reply_by: "command" as const }) };
+      } else delete state.last_source;
       this.replaceInboxUnlocked(remaining);
       this.writeJson("inboxState", state);
       return { envelopes, consumedDeliveryIds, seenThroughSeq, pendingCount };
@@ -1169,10 +1178,11 @@ export class AgentStateStore {
   }
 
   /** Return the most recently observed user Inbox source with a safe reply/send anchor. */
-  resolveCurrentInboxSource(): { deliveryTarget: string; deliveryAnchor: string } | null {
+  resolveCurrentInboxSource(): { deliveryTarget: string; deliveryAnchor: string; replyByCommand?: true } | null {
     return this.withInboxLock(this.file("inbox"), () => {
       const source = this.inboxState().last_source;
-      return source ? { deliveryTarget: source.target, deliveryAnchor: source.message_id } : null;
+      return source ? { deliveryTarget: source.target, deliveryAnchor: source.message_id,
+        ...(source.reply_by === "command" ? { replyByCommand: true as const } : {}) } : null;
     });
   }
 
