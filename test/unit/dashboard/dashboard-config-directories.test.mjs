@@ -14,6 +14,12 @@ const testManagedCli = (agent, env) => ({ command: { command: "/test/official-la
   env: { ...env, LARK_CHANNEL: "1", LARK_CHANNEL_CONFIG: path.join(agent.stateDir, "lark-channel-source", "config.json"),
     LARKSUITE_CLI_CONFIG_DIR: agent.larkConfigDir } });
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((yes) => { resolve = yes; });
+  return { promise, resolve };
+}
+
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-dashboard-directory-"));
   fs.chmodSync(root, 0o700);
@@ -99,6 +105,52 @@ test("dashboard config lists only explicit chat policies, resolves a missing loc
   const after = await get(controller, `/api/config?agent=${APP}`);
   assert.equal(after.status, 200);
   assert.deepEqual(after.body.agents[0].knownChats, [], "inherit removes the persisted override and therefore the Dashboard row");
+});
+
+test("GET /api/config?chats=0 returns the global values without looking up any group name", async () => {
+  const { createDashboardConfigController } = await import(`${CONTROLLER}?nochats=${Date.now()}`);
+  const f = fixture();
+  onTestFinished(() => fs.rmSync(f.root, { recursive: true, force: true }));
+  const resolutions = [];
+  const chatDirectoryResolver = { async resolve(input) { resolutions.push(input); return {}; } };
+  const controller = createDashboardConfigController({ csrfCapability: "test", env: f.env, chatDirectoryResolver });
+
+  const response = await get(controller, "/api/config?chats=0");
+  assert.equal(response.status, 200);
+  assert.ok(response.body.mentionPolicy && response.body.agents.length > 0);
+  assert.equal(response.body.agents[0].knownChats, undefined);
+  assert.equal(resolutions.length, 0, "the global settings sheet must not wait on Feishu group lookups");
+});
+
+test("group names resolved once are saved and answer later reads without waiting on Feishu", async () => {
+  const { createDashboardConfigController } = await import(`${CONTROLLER}?saved-names=${Date.now()}`);
+  const { mutateConfig } = await import(CONFIG);
+  const f = fixture();
+  onTestFinished(() => fs.rmSync(f.root, { recursive: true, force: true }));
+  const namesFile = path.join(f.root, "state", "agents", APP, "chat-names.json");
+  let next = () => Promise.resolve({ oc_explicit: "第一次查到的群名" });
+  const calls = [];
+  const chatDirectoryResolver = { resolve(input) { calls.push(input.chatIds); return next(); } };
+  const controller = createDashboardConfigController({ csrfCapability: "test", env: f.env, chatDirectoryResolver });
+  const names = (response) => Object.fromEntries(response.body.agents[0].knownChats.map(({ chatId, displayName }) => [chatId, displayName]));
+
+  assert.deepEqual(names(await get(controller, `/api/config?agent=${APP}`)), { oc_explicit: "第一次查到的群名" });
+  assert.deepEqual(JSON.parse(fs.readFileSync(namesFile, "utf8")), { oc_explicit: "第一次查到的群名" });
+  assert.equal((fs.statSync(namesFile).mode & 0o777), 0o600);
+
+  const refresh = deferred();
+  next = () => refresh.promise;
+  assert.deepEqual(names(await get(controller, `/api/config?agent=${APP}`)), { oc_explicit: "第一次查到的群名" },
+    "a saved name answers while the Feishu refresh is still pending");
+  refresh.resolve({ oc_explicit: "改名后的群名" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(JSON.parse(fs.readFileSync(namesFile, "utf8")), { oc_explicit: "改名后的群名" }, "the background refresh updates the saved name");
+
+  mutateConfig(f.env, { kind: "set-chat-mention", agentId: APP, chatId: "oc_new", value: "require" }, { kind: "user" });
+  next = () => Promise.resolve({ oc_explicit: "改名后的群名", oc_new: "新群" });
+  assert.deepEqual(names(await get(controller, `/api/config?agent=${APP}`)), { oc_explicit: "改名后的群名", oc_new: "新群" },
+    "a group never resolved before waits for Feishu once");
+  assert.equal(calls.length, 3);
 });
 
 test("dashboard chat lookup reuses the managed Agent environment that scrubs foreign CLI homes", async () => {
