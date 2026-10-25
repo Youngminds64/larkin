@@ -40,6 +40,10 @@ import { replyModeFromEnv, type ReplyMode } from "../platform/reply-mode.js";
 export interface AgentRuntimeConfig {
   agentId: string; name: string; displayName?: string | null; description?: string | null;
   runtime: string; model: string; effort?: string | null; workspaceDir: string;
+  /** Codex sandbox; absent means danger-full-access. Other Runtimes ignore it. */
+  sandbox?: string | null;
+  /** Codex Fast service tier; other Runtimes ignore it. */
+  fastMode?: boolean | null;
   stateDir?: string; sessionId?: string | null;
   previousSession?: PreviousSessionRef | null;
   larkConfigDir?: string;
@@ -1417,7 +1421,7 @@ export function createRuntimeHost(options: {
       const generation = ++agent.generation;
       const sessionEnv = runtimeEnv(agent.config, `${agent.launchId}:${generation}`);
       const session = await agent.adapter.createSession({
-        agentId: agent.config.agentId, model: agent.config.model, reasoningEffort: agent.config.effort || null,
+        agentId: agent.config.agentId, model: agent.config.model, reasoningEffort: agent.config.effort || null, sandbox: agent.config.sandbox || null, fastMode: agent.config.fastMode === true,
         workspaceDir: agent.config.workspaceDir, stateDir: agent.config.stateDir,
         resumeSessionId: agent.config.sessionId || null, standingPrompt,
         env: sessionEnv,
@@ -1476,7 +1480,7 @@ export function createRuntimeHost(options: {
     let fresh: RuntimeSession;
     try {
       fresh = await agent.adapter.createSession({ agentId: agent.config.agentId, model: agent.config.model,
-        reasoningEffort: agent.config.effort || null, workspaceDir: agent.config.workspaceDir, stateDir: agent.config.stateDir,
+        reasoningEffort: agent.config.effort || null, sandbox: agent.config.sandbox || null, fastMode: agent.config.fastMode === true, workspaceDir: agent.config.workspaceDir, stateDir: agent.config.stateDir,
         resumeSessionId: null, standingPrompt, env: probeEnv });
     } catch {
       throw new RuntimeSessionRecoveryError("recovery_staged_not_committed", "Pi fresh fallback session could not be staged");
@@ -1591,7 +1595,7 @@ export function createRuntimeHost(options: {
         cli: agentCliPromptCapabilities("larkin"), previousSession: previous.previousSession,
       });
       const session = await adapter.createSession({
-        agentId: config.agentId, model: config.model, reasoningEffort: config.effort || null,
+        agentId: config.agentId, model: config.model, reasoningEffort: config.effort || null, sandbox: config.sandbox || null, fastMode: config.fastMode === true,
         workspaceDir: config.workspaceDir, stateDir: config.stateDir,
         resumeSessionId: config.sessionId || null, standingPrompt,
         env: stageEnv,
@@ -1692,7 +1696,7 @@ export function createRuntimeHost(options: {
         cli: agentCliPromptCapabilities("larkin"), previousSession: previousRef,
       });
       const create = agent.adapter.createSession({
-        agentId: agent.config.agentId, model: agent.config.model, reasoningEffort: agent.config.effort || null,
+        agentId: agent.config.agentId, model: agent.config.model, reasoningEffort: agent.config.effort || null, sandbox: agent.config.sandbox || null, fastMode: agent.config.fastMode === true,
         workspaceDir: agent.config.workspaceDir, stateDir: agent.config.stateDir,
         resumeSessionId: null, standingPrompt, env: probeEnv,
       });
@@ -1798,7 +1802,7 @@ export function createRuntimeHost(options: {
       let fresh: RuntimeSession;
       try {
         fresh = await agent.adapter.createSession({
-          agentId: agent.config.agentId, model: agent.config.model, reasoningEffort: agent.config.effort || null,
+          agentId: agent.config.agentId, model: agent.config.model, reasoningEffort: agent.config.effort || null, sandbox: agent.config.sandbox || null, fastMode: agent.config.fastMode === true,
           workspaceDir: agent.config.workspaceDir, stateDir: agent.config.stateDir,
           resumeSessionId: null, standingPrompt, env: probeEnv,
         });

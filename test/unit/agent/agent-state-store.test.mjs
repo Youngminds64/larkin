@@ -191,19 +191,45 @@ test("an unscoped mixed-target poll clears the implicit source instead of choosi
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test("a polled batch replies by command only when no message in it addressed the Agent", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-state-reply-by-"));
+  try {
+    const { createAgentStateStore } = await import(moduleUrl);
+    const store = createAgentStateStore(root, "cli_stateReplyByA1");
+    const target = "chat:oc_reply_by";
+    store.appendNdjson("inbox", { message_id: "om_free_1", target, content: "A", wake: true, reply_by: "command" });
+    store.pollInbox({ target });
+    assert.deepEqual(store.resolveCurrentInboxSource(), { deliveryTarget: target, deliveryAnchor: "om_free_1", replyByCommand: true });
+
+    store.appendNdjson("inbox", { message_id: "om_at", target, content: "@ me", wake: true });
+    store.appendNdjson("inbox", { message_id: "om_free_2", target, content: "B", wake: true, reply_by: "command" });
+    store.pollInbox({ target });
+    assert.deepEqual(store.resolveCurrentInboxSource(), { deliveryTarget: target, deliveryAnchor: "om_free_2" },
+      "an @ in the same batch keeps the reply card");
+
+    // An Inbox audit wakes the Agent with a reminder; it then polls a group message that never woke it.
+    store.appendNdjson("inbox", { message_id: "rem_inbox_audit_1", kind: "reminder", target: "runtime:reminder", content: "audit", wake: true });
+    // The Host stores an unwoken message without any `wake` field.
+    store.appendNdjson("inbox", { message_id: "om_unwoken", target, content: "C" });
+    store.pollInbox();
+    assert.deepEqual(store.resolveCurrentInboxSource(), { deliveryTarget: target, deliveryAnchor: "om_unwoken", replyByCommand: true },
+      "a message that never woke the Agent is answered by command, even next to the audit reminder");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("implicit reminder source stays bound to the active poll when an unpolled Inbox event races in", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-state-targeted-source-"));
   try {
     const { createAgentStateStore } = await import(moduleUrl);
     const store = createAgentStateStore(root, "cli_stateTargetedSourceA1");
-    store.appendNdjson("inbox", { message_id: "om_source_a", target: "chat:oc_source_a", content: "A" });
+    store.appendNdjson("inbox", { message_id: "om_source_a", target: "chat:oc_source_a", content: "A", wake: true });
     const polled = store.pollInbox({ target: "chat:oc_source_a", limit: 1 });
     assert.deepEqual(polled.envelopes.map((row) => row.message_id), ["om_source_a"]);
     assert.deepEqual(store.resolveCurrentInboxSource(), { deliveryTarget: "chat:oc_source_a", deliveryAnchor: "om_source_a" });
 
     // B is durably appended but has not been consumed by this Agent yet. It
     // must not replace A as the implicit target for a targetless schedule.
-    store.appendNdjson("inbox", { message_id: "om_source_b", target: "chat:oc_source_b", content: "B" });
+    store.appendNdjson("inbox", { message_id: "om_source_b", target: "chat:oc_source_b", content: "B", wake: true });
     assert.deepEqual(store.resolveCurrentInboxSource(), { deliveryTarget: "chat:oc_source_a", deliveryAnchor: "om_source_a" });
     const { createReminderRoutes } = await import(reminderRoutesUrl);
     const routes = createReminderRoutes({
@@ -509,7 +535,7 @@ test("consumed reminder context is available to the outbound audit hook without 
     store.clearCurrentReminder("reminder-full-id");
     assert.equal(store.resolveCurrentReminder(), null);
 
-    store.appendNdjson("inbox", { message_id: "om_turn_source", chat_id: "oc_turn_source", content: "source" });
+    store.appendNdjson("inbox", { message_id: "om_turn_source", chat_id: "oc_turn_source", content: "source", wake: true });
     store.pollInbox({ target: "chat:oc_turn_source", limit: 1 });
     assert.deepEqual(store.resolveCurrentInboxSource(), { deliveryTarget: "chat:oc_turn_source", deliveryAnchor: "om_turn_source" });
     store.clearCurrentInboxSource();
@@ -652,31 +678,53 @@ test("Inbox contender retries when the lock directory disappears after guarded r
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test("EPERM inspection of a live Inbox owner fails closed without reclaim", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-state-eperm-lock-"));
+test("the Inbox lock owner records no process identity, so a sandboxed Agent that cannot run ps can still lock", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-state-owner-shape-"));
+  try {
+    const { createAgentStateStore } = await import(moduleUrl);
+    const store = createAgentStateStore(root, "cli_stateOwnerShapeA1");
+    store.writeJson("status", { prepared: true });
+    let owner = null;
+    store.withInboxTransaction(() => {
+      owner = JSON.parse(fs.readFileSync(path.join(`${store.paths.inbox}.lock`, "owner.json"), "utf8"));
+    });
+    assert.deepEqual(Object.keys(owner).sort(), ["createdAt", "nonce", "pid", "version"]);
+    assert.equal(owner.pid, process.pid);
+    assert.equal(fs.existsSync(`${store.paths.inbox}.lock`), false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a live Inbox owner is reclaimed only after it has held the lock for 60 seconds", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-state-stale-lock-"));
   const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 60_000)"], { stdio: "ignore" });
   try {
     const { createAgentStateStore } = await import(moduleUrl);
-    const processState = await import(processStateUrl);
     await new Promise((resolve) => setTimeout(resolve, 100));
-    const childIdentity = processState.inspectProcess(child.pid);
-    assert.equal(childIdentity.ok, true, childIdentity.reason);
-    const store = createAgentStateStore(root, "cli_stateEpermLockA1", {
-      inspectProcess(pid) {
-        if (pid === child.pid) return { ok: false, reason: "kill(0) EPERM" };
-        return processState.inspectProcess(pid);
-      },
-    });
+    const store = createAgentStateStore(root, "cli_stateStaleLockA1");
     store.writeJson("status", { prepared: true });
     const lockDir = `${store.paths.inbox}.lock`;
-    fs.mkdirSync(lockDir, { mode: 0o700 });
-    fs.writeFileSync(path.join(lockDir, "owner.json"), `${JSON.stringify({
-      version: 1, pid: child.pid, processStartToken: childIdentity.startToken,
-      nonce: "00000000-0000-4000-8000-000000000001",
-    })}\n`, { mode: 0o600 });
-    assert.throws(() => store.appendNdjson("inbox", { message_id: "om_eperm" }), /锁等待超时/);
-    assert.equal(fs.existsSync(lockDir), true, "unknown live owner must not be reclaimed");
-    assert.doesNotThrow(() => process.kill(child.pid, 0));
+    const writeOwner = (owner) => {
+      fs.mkdirSync(lockDir, { mode: 0o700 });
+      fs.writeFileSync(path.join(lockDir, "owner.json"), `${JSON.stringify({
+        version: 1, pid: child.pid, nonce: "00000000-0000-4000-8000-000000000003", ...owner,
+      })}\n`, { mode: 0o600 });
+    };
+    writeOwner({ createdAt: Date.now() });
+    assert.throws(() => store.appendNdjson("inbox", { message_id: "om_young_owner" }), /锁等待超时/);
+    assert.equal(fs.existsSync(lockDir), true, "a recent owner must not be reclaimed while alive");
+    fs.rmSync(lockDir, { recursive: true });
+
+    writeOwner({ createdAt: Date.now() - 61_000 });
+    store.appendNdjson("inbox", { message_id: "om_after_stale_owner", chat_id: "oc_lock" });
+    assert.equal(fs.existsSync(lockDir), false);
+
+    // Owners written by older versions carry a start token and no createdAt; the directory mtime stands in.
+    writeOwner({ processStartToken: "legacy-token" });
+    const old = new Date(Date.now() - 61_000);
+    fs.utimesSync(lockDir, old, old);
+    store.appendNdjson("inbox", { message_id: "om_after_legacy_owner", chat_id: "oc_lock" });
+    assert.deepEqual(store.readNdjson("inbox").map((row) => row.message_id), ["om_after_stale_owner", "om_after_legacy_owner"]);
+    assert.equal(fs.existsSync(lockDir), false);
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
       child.kill("SIGKILL");
