@@ -115,6 +115,8 @@ test("only chat/thread sources with a real om_ anchor become card addresses", ()
   assert.equal(replyAddressOf({ deliveryTarget: "document-comment:doc_x", deliveryAnchor: "doc_comment_1" }), null);
   assert.equal(replyAddressOf({ deliveryTarget: "chat:oc_a", deliveryAnchor: "rem_1" }), null);
   assert.equal(replyAddressOf(null), null);
+  assert.equal(replyAddressOf({ deliveryTarget: "chat:oc_a", deliveryAnchor: "om_3", replyByCommand: true }), null,
+    "a source that replies by command opens no card");
 });
 
 test("tool arguments shown on the card are one bounded line with credentials redacted", () => {
