@@ -126,7 +126,7 @@ interface InboxSourceState {
   message_id: string;
   seq: number;
   kind?: string;
-  /** The polled batch only woke the Agent without an @, so it replies by command and no card opens. */
+  /** No message in the polled batch addressed the Agent, so it replies by command and no card opens. */
   reply_by?: "command";
 }
 
@@ -1102,10 +1102,12 @@ export class AgentStateStore {
       });
       const userTargets = new Set(userSources.map((source) => source.target));
       if (userSources.length && userTargets.size === 1) {
-        // Any message in the batch that addressed the Agent keeps the reply card.
-        const addressed = envelopes.some((envelope) => envelope.wake === true && envelope.reply_by !== "command");
-        const byCommand = !addressed && envelopes.some((envelope) => envelope.reply_by === "command");
-        state.last_source = { ...userSources.at(-1)!, ...(byCommand ? { reply_by: "command" as const } : {}) };
+        // Only a user message that addressed the Agent opens a reply card. A message that never woke it
+        // (read later, e.g. by an Inbox audit) or woke it without an @ is answered by command; the audit
+        // reminder itself is not a user message and does not count.
+        const addressed = envelopes.some((envelope) => envelope.wake !== false && envelope.reply_by !== "command"
+          && isUserDeliveryTarget(targetKeyOfInboxEnvelope(envelope)));
+        state.last_source = { ...userSources.at(-1)!, ...(addressed ? {} : { reply_by: "command" as const }) };
       } else delete state.last_source;
       this.replaceInboxUnlocked(remaining);
       this.writeJson("inboxState", state);
