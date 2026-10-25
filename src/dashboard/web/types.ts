@@ -106,6 +106,9 @@ export interface ConfigAgent {
   runtimeOption: "codex" | "claude" | "pi";
   model: string;
   effort: string | null;
+  /** Codex sandbox; other Runtimes ignore it. */
+  sandbox?: "workspace-write" | "danger-full-access";
+  fastMode?: boolean;
   mention: { override: "inherit" | "require" | "free"; effective: "require" | "free"; source: "global" | "agent" };
   inboxAudit: {
     override: { enabled: "inherit" | "on" | "off"; intervalMs: "inherit" | number };
@@ -122,6 +125,8 @@ export interface RuntimeModel {
   label?: string;
   supportedReasoningEfforts?: string[];
   defaultReasoningEffort?: string;
+  /** Codex only: the model offers the Fast speed tier. */
+  supportsFast?: boolean;
 }
 
 export interface ConfigResponse {
@@ -172,6 +177,13 @@ export interface InstructionFilesResponse {
     file: Extract<WorkspaceProjection, { kind: "file" }> | null;
     error: string | null;
   }>;
+}
+
+export interface StandingPromptResponse {
+  runtime: string;
+  replyMode: "card" | "cli";
+  version: string;
+  content: string;
 }
 
 export type CapabilityKind = "skill" | "subagent" | "plugin" | "mcp";

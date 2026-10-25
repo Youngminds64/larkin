@@ -64,6 +64,8 @@ interface ConfiguredAgent {
   runtime: string;
   model: string;
   effort?: string | null;
+  sandbox?: string | null;
+  fastMode?: boolean | null;
   displayName?: string | null;
   description?: string | null;
   feishuAppId: string;
@@ -251,6 +253,8 @@ function agentConfigSignature(agent: ConfiguredAgent): string {
     noMentionChats: agent.noMentionChats || [],
     // Only present once configured, so upgrading does not restart unchanged Agents.
     ...(agent.replyMode ? { replyMode: agent.replyMode } : {}),
+    ...(agent.sandbox ? { sandbox: agent.sandbox } : {}),
+    ...(agent.fastMode ? { fastMode: true } : {}),
   });
 }
 

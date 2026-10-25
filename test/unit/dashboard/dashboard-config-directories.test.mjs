@@ -524,13 +524,14 @@ test("Codex model directory reuses app-server model/list with five-minute cachin
   const discoverCodexModelCatalog = async (options) => {
     calls.push(options);
     await Promise.resolve();
-    return { effectiveModel: "gpt-5.4-mini", models: [{ id: "gpt-5.4-mini", label: "GPT-5.4-Mini", supportedReasoningEfforts: ["low", "medium"], defaultReasoningEffort: "medium" }] };
+    return { effectiveModel: "gpt-5.4-mini", models: [{ id: "gpt-5.4-mini", label: "GPT-5.4-Mini", supportedReasoningEfforts: ["low", "medium"], defaultReasoningEffort: "medium", supportsFast: true }] };
   };
   const resolver = module.createCodexModelDirectoryResolver({ discoverCodexModelCatalog, now: () => now, ttlMs: 5 * 60_000 });
   const input = { agentId: APP, cwd: "/tmp/codex-workspace", env: { CODEX_HOME: "/tmp/codex-home" } };
 
   const [first, concurrent] = await Promise.all([resolver.resolve(input), resolver.resolve(input)]);
   assert.deepEqual(first.map(({ id }) => id), ["default", "gpt-5.4-mini"]);
+  assert.deepEqual(first.map(({ supportsFast }) => supportsFast), [true, true], "default inherits the effective model's Fast support");
   assert.equal(first[0].label, "default: gpt-5.4-mini");
   assert.equal(Object.hasOwn(first[0], "supportedReasoningEfforts"), false);
   assert.equal(Object.hasOwn(first[0], "defaultReasoningEffort"), false);
@@ -693,5 +694,23 @@ test("PATCH set-agent-runtime rejects builtin-pi as an unknown runtime", async (
   const response = await patch(controller, { operation: "set-agent-runtime", agentId: APP, runtime: "builtin-pi", model: "default" });
   assert.equal(response.status, 400);
   assert.match(response.body.error, /未知 runtime/);
+  assert.equal(fs.readFileSync(path.join(f.root, "config.json"), "utf8"), before);
+});
+
+test("PATCH set-agent-sandbox saves the Codex sandbox and GET projects it", async () => {
+  const { createDashboardConfigController } = await import(`${CONTROLLER}?sandbox=${Date.now()}`);
+  const f = fixture();
+  onTestFinished(() => fs.rmSync(f.root, { recursive: true, force: true }));
+  const controller = createDashboardConfigController({ csrfCapability: "test", env: f.env, chatDirectoryResolver: { async resolve() { return {}; } } });
+  assert.equal((await get(controller, `/api/config?agent=${APP}`)).body.agents[0].sandbox, "danger-full-access");
+
+  const saved = await patch(controller, { operation: "set-agent-sandbox", agentId: APP, value: "workspace-write" });
+  assert.equal(saved.status, 200);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.root, "config.json"), "utf8")).agents[APP].sandbox, "workspace-write");
+  assert.equal((await get(controller, `/api/config?agent=${APP}`)).body.agents[0].sandbox, "workspace-write");
+
+  const before = fs.readFileSync(path.join(f.root, "config.json"), "utf8");
+  const rejected = await patch(controller, { operation: "set-agent-sandbox", agentId: APP, value: "read-only" });
+  assert.equal(rejected.status, 400);
   assert.equal(fs.readFileSync(path.join(f.root, "config.json"), "utf8"), before);
 });
