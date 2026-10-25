@@ -288,7 +288,7 @@ function GroupPolicyTable({ config, onSave, disabled }: {
   const [query, setQuery] = useState("");
   const [newChat, setNewChat] = useState("");
   const [newPolicy, setNewPolicy] = useState<"require" | "free">("require");
-  const groups = config.knownChats.filter((chat) => chat.kind === "group" && chat.override !== "inherit").filter((chat) => {
+  const groups = (config.knownChats ?? []).filter((chat) => chat.kind === "group" && chat.override !== "inherit").filter((chat) => {
     const needle = query.trim().toLocaleLowerCase();
     return !needle || chat.chatId.toLocaleLowerCase().includes(needle) || String(chat.displayName || "未解析群名").toLocaleLowerCase().includes(needle);
   });
@@ -351,7 +351,8 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
     const token = gate.current.issue();
     setLoading(true);
     try {
-      const next = await privateGet<ConfigResponse>(`/api/config?agent=${encodeURIComponent(agentId)}`);
+      // Only the reply tab lists groups; the other tabs skip the Feishu group-name lookup.
+      const next = await privateGet<ConfigResponse>(`/api/config?agent=${encodeURIComponent(agentId)}${section === "reply" ? "" : "&chats=0"}`);
       if (!gate.current.accepts(token)) return;
       const agent = next.agents[0];
       if (!agent) throw new Error("配置投影中没有当前 Agent");
@@ -366,7 +367,7 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
       if (!preserveDraft || !dirty) setDraft(values);
     } catch (error) { if (gate.current.accepts(token)) setFeedback(error instanceof Error ? error.message : String(error)); }
     finally { if (gate.current.accepts(token)) setLoading(false); }
-  }, [agentId, dirty]);
+  }, [agentId, dirty, section]);
   useEffect(() => { void load(false); }, [agentId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (refreshKey > 0) void load(true); }, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
