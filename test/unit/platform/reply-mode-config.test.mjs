@@ -52,7 +52,21 @@ test("global reply mode is stored once, projected onto every Agent and requires 
 test("a per-session reply mode overrides the prompt builder default", () => {
   const builder = new ContextPromptBuilder({ replyMode: "card" });
   const input = { agentId: APP, runtime: "codex" };
-  assert.equal(builder.build(input).version, "larkin-standing-v36-card");
+  assert.equal(builder.build(input).version, "larkin-standing-v37-card");
   assert.equal(builder.build({ ...input, replyMode: "cli" }).version, "larkin-standing-v34");
-  assert.equal(new ContextPromptBuilder().build({ ...input, replyMode: "card" }).version, "larkin-standing-v36-card");
+  assert.equal(new ContextPromptBuilder().build({ ...input, replyMode: "card" }).version, "larkin-standing-v37-card");
+});
+
+test("card prompt drops Feishu reply recipes but keeps the safety boundaries", () => {
+  const input = { agentId: APP, runtime: "codex" };
+  const card = new ContextPromptBuilder({ replyMode: "card" }).build(input).content;
+  const cli = new ContextPromptBuilder({ replyMode: "cli" }).build(input).content;
+  for (const recipe of ["--page-size 10", "im +chat-search --query", "$'First line", "--reply-in-thread", "--text '<exact_body"]) {
+    assert.ok(!card.includes(recipe), `card prompt still carries recipe: ${recipe}`);
+    assert.ok(cli.includes(recipe), `cli prompt lost recipe: ${recipe}`);
+  }
+  for (const boundary of ["never invoke bare `lark-cli`", "beginning with `om_`", "`rem_`, `redeliver_`", "never the whole chat",
+    "`duplicate: true`", "Freshness never blocks a write", "inside the same topic when the source is a thread", "im messages delete --message-id"]) {
+    assert.ok(card.includes(boundary), `card prompt lost boundary: ${boundary}`);
+  }
 });
