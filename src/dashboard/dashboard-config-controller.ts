@@ -73,6 +73,26 @@ function cleanChatName(value: unknown): string | null {
   return cleaned || null;
 }
 
+function readSavedChatNames(file: string): Record<string, string> {
+  try {
+    if (fs.statSync(file).size > 256 * 1024) return {};
+    const value = JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value).flatMap(([chatId, name]) => {
+      const cleaned = cleanChatName(name);
+      return cleaned ? [[chatId, cleaned]] : [];
+    }));
+  } catch { return {}; }
+}
+
+function saveChatNames(file: string, names: Record<string, string>): void {
+  try {
+    const temp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(temp, `${JSON.stringify(names)}\n`, { mode: 0o600 });
+    fs.renameSync(temp, file);
+  } catch { /* names are a convenience; the next refresh retries */ }
+}
+
 function chatList(value: unknown): Array<{ chatId: string; name: string }> {
   const rows = (value as { data?: { chats?: unknown[] } } | null)?.data?.chats;
   if (!Array.isArray(rows)) return [];
@@ -341,15 +361,30 @@ async function sanitizedView(env: Env, chatDirectoryResolver: ChatDirectoryResol
     } catch { /* no known chat map yet */ }
     const configuredChatIds = Object.keys(agent?.chatMentionPolicies || {});
     const aliases = knownChatAliases(map, configuredChatIds);
-    let directory: Record<string, string> = {};
-    try {
-      directory = await chatDirectoryResolver.resolve({
+    // Names resolved before are saved per Agent and answer at once; Feishu refreshes them in the background
+    // and is awaited only for a group that has never been resolved.
+    const namesFile = path.join(agent.stateDir, "chat-names.json");
+    const saved = readSavedChatNames(namesFile);
+    let directory: Record<string, string> = saved;
+    if (configuredChatIds.length) {
+      const refresh = chatDirectoryResolver.resolve({
         agentId,
         chatIds: configuredChatIds,
         configDir: agent.larkConfigDir,
         profile: agent.feishuProfile,
+      }).then((names) => {
+        const merged = Object.fromEntries(configuredChatIds.flatMap((id) => {
+          const name = names[id] ?? saved[id];
+          return name ? [[id, name]] : [];
+        }));
+        saveChatNames(namesFile, merged);
+        return merged;
       });
-    } catch { /* explicit configuration remains visible without a resolved name */ }
+      if (configuredChatIds.every((id) => saved[id])) void refresh.catch(() => undefined);
+      else {
+        try { directory = await refresh; } catch { /* explicit configuration remains visible without a resolved name */ }
+      }
+    }
     item.knownChats = configuredChatIds.sort((left, right) => left.localeCompare(right, "en")).map((configuredChatId) => ({
       ...(aliases[configuredChatId] ?? { chatId: configuredChatId, displayName: null, kind: "group" as const }),
       displayName: directory[configuredChatId] ?? aliases[configuredChatId]?.displayName ?? null,
