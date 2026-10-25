@@ -161,7 +161,7 @@ test("a group message that wakes the Agent without an @ is marked to reply by co
     thread_id: null, _mentioned_bot: false, _mention_all: false, _sender_is_bot: false };
   const free = projector.projectInbound(agent, { ...base, message_id: "om_free" }, { anchorReply: true });
   assert.equal(free.reply_by, "command");
-  assert.match(free.content, /^hello\n\[回复方式: 这条消息没有 @ 你，不会开卡片，你写的文字不会发给任何人。要回复就运行 larkin im \+messages-reply --message-id om_free --text '<回复>' --json；/);
+  assert.match(free.content, /^hello\n\[回复方式: command reply。这条消息没有 @ 你，不开卡片，你写的文字不会送达。要回复就运行 larkin im \+messages-reply --message-id om_free --text '<回复>' --json；/);
   const topic = projector.projectInbound(agent, { ...base, message_id: "om_topic", thread_id: "omt_t" }, { anchorReply: true });
   assert.match(topic.content, /--message-id om_topic --reply-in-thread --text/);
   for (const [label, event, options] of [
