@@ -35,6 +35,7 @@ import {
   PiCompactionRecoveryMachine,
 } from "./pi-compaction-recovery.js";
 import { effectivePiStateDir } from "./pi-state-dir.js";
+import { replyModeFromEnv, type ReplyMode } from "../platform/reply-mode.js";
 
 export interface AgentRuntimeConfig {
   agentId: string; name: string; displayName?: string | null; description?: string | null;
@@ -43,6 +44,8 @@ export interface AgentRuntimeConfig {
   previousSession?: PreviousSessionRef | null;
   larkConfigDir?: string;
   feishuAppId?: string;
+  /** Global reply mode from Larkin config; null/absent falls back to LARKIN_REPLY_MODE, else card. */
+  replyMode?: ReplyMode | null;
 }
 
 export type DeliveryStatus = "pending" | "submitting" | "accepted" | "consumed" | "error";
@@ -467,6 +470,7 @@ export function createRuntimeHost(options: {
     ...(process.env.BASH_ENV ? { BASH_ENV: process.env.BASH_ENV } : {}),
     PATH: [config.stateDir ? path.join(config.stateDir, "runtime-bin") : null, process.env.PATH].filter(Boolean).join(path.delimiter),
       LARKSUITE_CLI_CONFIG_DIR: config.larkConfigDir ?? process.env.LARKSUITE_CLI_CONFIG_DIR,
+      LARKIN_REPLY_MODE: config.replyMode ?? replyModeFromEnv(process.env),
     };
     return config.larkConfigDir ? managedLarkCliEnv(config, base) : base;
   };
@@ -1403,7 +1407,7 @@ export function createRuntimeHost(options: {
       if (readiness.state !== "ready") throw new RuntimePrerequisiteError(readiness);
       if (agent.stopped) throw new Error("runtime Agent is stopped");
       const standingPrompt = options.promptBuilder.build({
-        agentId: agent.config.agentId, name: agent.config.displayName || agent.config.name,
+        agentId: agent.config.agentId, replyMode: agent.config.replyMode, name: agent.config.displayName || agent.config.name,
         description: agent.config.description || "", runtime: agent.adapter.id,
         cli: agentCliPromptCapabilities("larkin"), previousSession: agent.previousSession,
       });
@@ -1462,7 +1466,7 @@ export function createRuntimeHost(options: {
     if (readiness.state !== "ready") throw new RuntimeSessionRecoveryError("recovery_staged_not_committed", "Pi context fallback readiness failed");
     const previousRef = previousSessionRefFor(oldSession, "context-window overflow");
     const standingPrompt = options.promptBuilder.build({
-      agentId: agent.config.agentId, name: agent.config.displayName || agent.config.name,
+      agentId: agent.config.agentId, replyMode: agent.config.replyMode, name: agent.config.displayName || agent.config.name,
       description: agent.config.description || "", runtime: agent.adapter.id, cli: agentCliPromptCapabilities("larkin"),
       previousSession: previousRef,
     });
@@ -1579,7 +1583,7 @@ export function createRuntimeHost(options: {
         : { runtime: adapter.id, state: "ready" as const };
       if (readiness.state !== "ready") throw new RuntimePrerequisiteError(readiness);
       const standingPrompt = options.promptBuilder.build({
-        agentId: config.agentId, name: config.displayName || config.name,
+        agentId: config.agentId, replyMode: config.replyMode, name: config.displayName || config.name,
         description: config.description || "", runtime: adapter.id,
         cli: agentCliPromptCapabilities("larkin"), previousSession: previous.previousSession,
       });
@@ -1680,7 +1684,7 @@ export function createRuntimeHost(options: {
       if (readiness.state !== "ready") throw new RuntimePrerequisiteError(readiness);
       const previousRef = previousSessionRefFor(oldSession, "operator reset");
       const standingPrompt = options.promptBuilder.build({
-        agentId: agent.config.agentId, name: agent.config.displayName || agent.config.name,
+        agentId: agent.config.agentId, replyMode: agent.config.replyMode, name: agent.config.displayName || agent.config.name,
         description: agent.config.description || "", runtime: agent.adapter.id,
         cli: agentCliPromptCapabilities("larkin"), previousSession: previousRef,
       });
@@ -1784,7 +1788,7 @@ export function createRuntimeHost(options: {
       const previousRef = previousSessionRefFor(oldSession, "context-window recovery");
       const oldPreviousSession = agent.previousSession;
       const standingPrompt = options.promptBuilder.build({
-        agentId: agent.config.agentId, name: agent.config.displayName || agent.config.name,
+        agentId: agent.config.agentId, replyMode: agent.config.replyMode, name: agent.config.displayName || agent.config.name,
         description: agent.config.description || "", runtime: agent.adapter.id,
         cli: agentCliPromptCapabilities("larkin"), previousSession: previousRef,
       });

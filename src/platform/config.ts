@@ -7,6 +7,7 @@ import { exactMode, fsyncDirectoryOf } from "./secure-metadata.js";
 import { CURRENT_RUNTIME_MODELS, type RuntimeModels } from "../runtime/runtime-model-catalog.js";
 import { fromUserRuntime, isAdapterRuntime, isUserRuntime, toUserRuntime } from "../runtime/user-runtime.js";
 import processInspect from "./process-inspect.cjs";
+import type { ReplyMode } from "./reply-mode.js";
 
 type Env = Record<string, string | undefined>;
 type Obj = Record<string, unknown>;
@@ -51,6 +52,8 @@ export interface HydratedAgent extends StoredAgent {
   larkConfigDir: string;
   /** Compatibility projection for older status consumers. Never stored in v4. */
   noMentionChats?: string[];
+  /** Projection of the global reply mode so Runtime agent snapshots carry it. Never stored per Agent. */
+  replyMode?: ReplyMode;
   [key: string]: unknown;
 }
 
@@ -59,6 +62,8 @@ export interface HydratedConfig {
   serverId: string | null;
   mentionPolicy: MentionPolicy;
   inboxAudit?: InboxAuditResolved;
+  /** Who delivers IM replies; absent means the Runtime process default (LARKIN_REPLY_MODE, else card). */
+  replyMode?: ReplyMode;
   configDir: string;
   larkinHome: string;
   larkConfigDir: string;
@@ -73,6 +78,7 @@ export type ConfigMutation =
   | { kind: "set-chat-mention"; agentId: string; chatId: string; value: MentionPolicyOverride }
   | { kind: "set-global-inbox-audit"; enabled?: boolean; intervalMs?: number }
   | { kind: "set-agent-inbox-audit"; agentId: string; enabled?: InboxAuditEnabledOverride; intervalMs?: InboxAuditIntervalOverride }
+  | { kind: "set-global-reply-mode"; value: ReplyMode }
   | { kind: "set-agent-runtime"; agentId: string; runtime: string; model?: string }
   | { kind: "set-agent-model"; agentId: string; model: string }
   | { kind: "set-agent-effort"; agentId: string; effort: string | null };
@@ -93,7 +99,7 @@ interface ConfigApplyFile { version: 1; persistedRevision: string; agents: Recor
 
 const TOP_FIELDS_V3 = new Set(["version", "serverId", "activeAgent", "agents"]);
 const TOP_FIELDS_V4 = new Set(["version", "serverId", "mentionPolicy", "activeAgent", "agents"]);
-const OPTIONAL_TOP_FIELDS_V4 = new Set(["inboxAudit"]);
+const OPTIONAL_TOP_FIELDS_V4 = new Set(["inboxAudit", "replyMode"]);
 const AGENT_FIELDS_V3 = new Set(["runtime", "model", "effort", "noMentionChats", "createdAt"]);
 const AGENT_FIELDS_V4 = new Set(["runtime", "model", "effort", "mentionPolicy", "chatMentionPolicies", "inboxAudit", "createdAt"]);
 const LEGACY_AGENT_FIELDS = new Set(["piDistribution", "runtimeOption", "processingEye"]);
@@ -162,6 +168,10 @@ function assertAllowedFields(object: Obj, allowed: Set<string>, label: string): 
 
 function assertPolicy(value: unknown, label: string): asserts value is MentionPolicy {
   if (value !== "require" && value !== "free") throw new Error(`${label} 只允许 require/free`);
+}
+
+function assertReplyMode(value: unknown, label: string): asserts value is ReplyMode {
+  if (value !== "card" && value !== "cli") throw new Error(`${label} 只允许 card/cli`);
 }
 
 export function assertInboxAuditInterval(value: unknown, label = "inbox-audit interval"): asserts value is number {
@@ -373,18 +383,24 @@ export function normalizeConfig(raw: unknown, configDir: string, { mint }: { min
   for (const field of topFields) if (!Object.hasOwn(raw, field)) throw new Error(`config 缺少必需字段 ${field}`);
   if (typeof raw.serverId !== "string" || !raw.serverId) throw new Error("config.serverId 必须是非空字符串");
   if (version === 4) assertPolicy(raw.mentionPolicy, "config.mentionPolicy");
+  if (version === 4 && Object.hasOwn(raw, "replyMode")) assertReplyMode(raw.replyMode, "config.replyMode");
   if (raw.activeAgent !== null && typeof raw.activeAgent !== "string") throw new Error("config.activeAgent 必须是字符串或 null");
   if (!isPlainObject(raw.agents)) throw new Error("config.agents 必须是普通 object");
   for (const [key, agent] of Object.entries(raw.agents)) validateStoredAgent(key, agent, version);
   if (raw.activeAgent !== null && !Object.hasOwn(raw.agents, raw.activeAgent)) throw new Error(`config.activeAgent 指向不存在的 Agent：${raw.activeAgent}`);
+  const replyMode = version === 4 && Object.hasOwn(raw, "replyMode") ? raw.replyMode as ReplyMode : undefined;
   const agents: Record<string, HydratedAgent> = {};
-  for (const [key, agent] of Object.entries(raw.agents)) agents[key] = hydrateAgent(key, hydratedStoredAgent(key, agent as Obj, version), layout.root);
+  for (const [key, agent] of Object.entries(raw.agents)) {
+    agents[key] = hydrateAgent(key, hydratedStoredAgent(key, agent as Obj, version), layout.root);
+    if (replyMode) agents[key].replyMode = replyMode;
+  }
   const inboxAudit = version === 4 && Object.hasOwn(raw, "inboxAudit")
     ? resolvedInboxAudit(parseStoredInboxAudit(raw.inboxAudit, "config.inboxAudit"))
     : undefined;
   return {
     version: 4, serverId: raw.serverId, mentionPolicy: version === 4 ? raw.mentionPolicy as MentionPolicy : "require",
     ...(inboxAudit ? { inboxAudit } : {}),
+    ...(replyMode ? { replyMode } : {}),
     configDir: layout.configDir, larkinHome: layout.larkinHome, larkConfigDir: resolveLarkConfigDir({}, layout.root), activeAgent: raw.activeAgent as string | null, agents,
   };
 }
@@ -574,13 +590,14 @@ export function selectAgent(config: HydratedConfig, env: Env = process.env): Hyd
 }
 
 export function toStored(config: HydratedConfig): {
-  version: 4; serverId: string | null; mentionPolicy: MentionPolicy; inboxAudit?: InboxAuditResolved;
+  version: 4; serverId: string | null; mentionPolicy: MentionPolicy; inboxAudit?: InboxAuditResolved; replyMode?: ReplyMode;
   activeAgent: string | null; agents: Record<string, StoredAgent>;
 } {
   const out: ReturnType<typeof toStored> = {
     version: 4, serverId: config.serverId, mentionPolicy: config.mentionPolicy, activeAgent: config.activeAgent, agents: {},
   };
   if (config.inboxAudit) out.inboxAudit = { enabled: config.inboxAudit.enabled, intervalMs: config.inboxAudit.intervalMs };
+  if (config.replyMode) out.replyMode = config.replyMode;
   for (const [key, agent] of Object.entries(config.agents || {})) {
     const stored: StoredAgent = { runtime: agent.runtime, model: agent.model };
     if (typeof agent.effort === "string" && agent.effort) stored.effort = agent.effort;
@@ -647,6 +664,8 @@ function agentSignature(config: HydratedConfig, agentId: string): string {
     globalInboxAudit: config.inboxAudit ?? null, agentInboxAudit: agent.inboxAudit ?? null,
     // 0.5.19 起不再有 processingEye 开关；固定 null 以免未配过该 key 的 Agent 升级后无意义 pending apply。
     globalProcessingEye: null, agentProcessingEye: null,
+    // Only present once configured, so upgrading does not mark every Agent pending apply.
+    ...(config.replyMode ? { globalReplyMode: config.replyMode } : {}),
   }));
 }
 
@@ -787,6 +806,13 @@ function applyMutation(config: HydratedConfig, mutation: ConfigMutation): { scop
     }
     config.inboxAudit = current;
     return { scope: "global", runtimeChange: false, affectedAgentIds: Object.keys(config.agents) };
+  }
+  if (mutation.kind === "set-global-reply-mode") {
+    assertReplyMode(mutation.value, "全局 reply mode");
+    config.replyMode = mutation.value;
+    for (const agent of Object.values(config.agents)) agent.replyMode = mutation.value;
+    // The standing prompt and the lark-cli gate are fixed per Runtime session, so each Agent must re-apply.
+    return { scope: "global", runtimeChange: true, affectedAgentIds: Object.keys(config.agents) };
   }
   if (!APP_ID.test(mutation.agentId) || !config.agents[mutation.agentId]) throw new Error(`Agent 不存在：${mutation.agentId}`);
   const agent = config.agents[mutation.agentId];
@@ -1220,6 +1246,7 @@ export function safeConfigView(config: HydratedConfig, onlyAgentId?: string, cha
   return {
     version: 4, mentionPolicy: config.mentionPolicy,
     inboxAudit: { enabled: inboxAudit.enabled, intervalMs: inboxAudit.intervalMs },
+    replyMode: config.replyMode ?? null,
     persistedRevision: applyState?.persistedRevision ?? "unknown", agents,
   };
 }
