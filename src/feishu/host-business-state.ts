@@ -401,13 +401,24 @@ export class HostEnvelopeProjector {
     }
     const names = options.names || {};
     if (!names[event.sender_id]) this.noteUnknownSender(agent, event.chat_id, event.sender_id);
-    return createMessageEnvelope({
+    const envelope = createMessageEnvelope({
       agent,
       event: { ...event, message_id: messageId },
       seq: this.nextSequence(agent.agentId),
       names,
       signature: options.signature,
     });
+    // A free-policy group wakes on every human message; most are not for the
+    // Agent, so a reply is an explicit command rather than a streamed card.
+    const unaddressedWake = options.anchorReply !== false && event.chat_type === "group"
+      && !event._sender_is_bot && !event._mentioned_bot && !event._mention_all;
+    if (!unaddressedWake || !/^om_[A-Za-z0-9_-]+$/.test(messageId)) return envelope;
+    const reply = this.larkCommand(`im +messages-reply --message-id ${messageId}${event.thread_id ? " --reply-in-thread" : ""} --text '<回复>' --json`);
+    return {
+      ...envelope,
+      reply_by: "command",
+      content: `${envelope.content}\n[回复方式: 这条消息没有 @ 你。要回复就运行 ${reply}，回复只通过这条命令发出。]`,
+    };
   }
 
   createReminderEnvelope(
