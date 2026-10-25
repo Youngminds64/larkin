@@ -281,9 +281,16 @@ export function reconcileInboxAuditTargetRetries(registryFile: string, retryFile
   return { recovered, remaining: loadRetryJournal(retryFile).targets.filter((row) => !agentId || row.agent_id === agentId).length };
 }
 
+// Self-contained in both reply modes: an audit wake polls runtime:reminder, so no
+// streaming card exists and only an explicit CLI reply reaches the user.
 function instruction(target: InboxAuditTarget, receiptValue: string): string {
-  const history = target.target.startsWith("thread:") ? "Use larkin im +threads-messages-list for this exact thread." : "Use larkin im +chat-messages-list for this exact chat.";
-  return `${history} Inspect first. When finished, run larkin inbox audit complete --receipt ${receiptValue} --outcome <no-finding|handled> --json. If a real finding needs a response, use the guarded reply path anchored at ${target.anchor}; otherwise stay silent.`;
+  const [kind, chatId, threadId] = target.target.split(":");
+  const thread = kind === "thread";
+  const history = thread
+    ? `Read this exact thread: larkin im +threads-messages-list --thread ${threadId} --order desc --page-size 20 --no-reactions --json.`
+    : `Read this exact chat: larkin im +chat-messages-list --chat-id ${chatId} --order desc --page-size 20 --no-reactions --json.`;
+  const reply = `larkin im +messages-reply --message-id ${target.anchor} --text '<reply>'${thread ? " --reply-in-thread" : ""} --json`;
+  return `${history} Inspect first. If a real finding needs a response, send it with \`${reply}\`; this audit turn has no streaming card, so assistant text alone is never delivered. Otherwise stay silent. When finished, run larkin inbox audit complete --receipt ${receiptValue} --outcome <no-finding|handled> --json.`;
 }
 
 function pendingRows(file: string, agentId: string): StoredTarget[] {
