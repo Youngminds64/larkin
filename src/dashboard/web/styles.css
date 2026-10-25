@@ -272,9 +272,20 @@ button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity:
 .sheet-head p { margin: 4px 0 0; color: var(--subtle); font-size: 11.5px; }
 .settings-form { padding-top: 18px; }
 .field-help { color: var(--subtle); font-size: 11px; }
+.sandbox-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.sandbox-option { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--paper); cursor: pointer; }
+.sandbox-option.active { border-color: var(--accent); background: var(--accent-soft); }
+.sandbox-option input { margin: 3px 0 0; accent-color: var(--accent); }
+.sandbox-option-text { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 8px; min-width: 0; }
+.sandbox-option strong { font-size: 13px; }
+.sandbox-option-text .ui-badge { justify-self: start; }
+.sandbox-option small { grid-column: 1 / -1; color: var(--subtle); font-size: 11px; line-height: 1.55; }
+.sandbox-scope { color: var(--subtle); font-size: 11px; line-height: 1.6; }
+.sandbox-scope summary { cursor: pointer; color: var(--ink); font-weight: 600; }
 .sandbox-scope p { margin: 0; }
 .sandbox-scope ul { margin: 4px 0; padding-left: 18px; list-style: disc; }
 .sandbox-scope li { margin: 2px 0; }
+@media (max-width: 720px) { .sandbox-options { grid-template-columns: 1fr; } }
 .compact-sidebar { padding: 16px 0; }
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes slide-in { from { transform: translateX(24px); opacity: .5; } }

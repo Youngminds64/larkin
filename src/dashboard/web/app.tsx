@@ -534,19 +534,26 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
   if (section === "advanced") return <div className="configuration-page">
     <section className="config-section">
       <div className="audit-controls" aria-labelledby="agent-sandbox-title">
-        <div className="audit-heading"><div><h3 id="agent-sandbox-title">沙箱</h3><p>Agent 执行命令时能写哪些地方。审批固定为不询问，因为没人在旁边点确认。</p></div></div>
-        <div className="config-grid">
-          <label><span>模式</span><select aria-label="沙箱模式" value={String(draft.sandbox || "danger-full-access")} disabled={loading} onChange={(event) => update("sandbox", event.target.value)}><option value="danger-full-access">不限制（danger-full-access）</option><option value="workspace-write">只能写工作区（workspace-write）</option></select></label>
+        <div className="audit-heading"><div><h3 id="agent-sandbox-title">沙箱</h3><p>决定 Agent 能改动你电脑上的哪些文件。它干活时不会停下来问你，所以边界要在这里先定好。</p></div></div>
+        <div className="sandbox-options" role="radiogroup" aria-label="沙箱模式">
+          {SANDBOX_OPTIONS.map((option) => {
+            const checked = (draft.sandbox || "danger-full-access") === option.value;
+            return <label key={option.value} className={cn("sandbox-option", checked && "active")}>
+              <input type="radio" name={`sandbox-${agentId}`} value={option.value} checked={checked} disabled={loading} onChange={() => update("sandbox", option.value)} />
+              <span className="sandbox-option-text"><strong>{option.title}</strong><Badge>{option.tag}</Badge><small>{option.detail}</small></span>
+            </label>;
+          })}
         </div>
-        {runtime === "codex" ? <div className="field-help sandbox-scope">
-          <p>选「只能写工作区」后，Agent 只能写这几处，其他位置都只读（包括 Larkin 配置和其他 Agent 的文件），联网不受影响：</p>
+        {runtime === "codex" ? <details className="sandbox-scope">
+          <summary>选「只改自己的文件夹」后，具体能改哪些地方</summary>
           <ul>
-            <li>自己的工作区 <code>~/.larkin/agents/{agentId}/</code>，AGENTS.md 也在这里</li>
-            <li>自己的状态目录 <code>~/.larkin/state/agents/{agentId}/</code>，存 Inbox、提醒和飞书登录信息</li>
-            <li>临时目录，如 <code>/tmp</code></li>
+            <li>它的工作区 <code>~/.larkin/agents/{agentId}/</code>，AGENTS.md 也在这里</li>
+            <li>它的消息、提醒和飞书登录记录 <code>~/.larkin/state/agents/{agentId}/</code></li>
+            <li>临时文件夹，比如 <code>/tmp</code></li>
           </ul>
-          <p>Inbox 巡检的完成回执会写不进去。保存后自动应用。</p>
-        </div> : <p className="field-help">只对 Codex 生效。当前是 {runtime}，这项保存了也不会改变它的行为。</p>}
+          <p>其余位置都只能看、不能改。因此它也改不了 Larkin 的设置，Inbox 巡检会无法标记完成。</p>
+        </details> : <p className="field-help">只对 Codex 生效。当前是 {runtime}，这项保存了也不会改变它的行为。</p>}
+        <p className="field-help">保存后自动应用；Agent 正忙时会等它空下来再切换。</p>
       </div>
       {sandboxDirty ? <>{actions}{status}</> : null}
     </section>
@@ -733,6 +740,11 @@ function Workspace({ agentId, onDirtyChange }: { agentId: string; onDirtyChange:
     <div className={cn("workspace-preview", dirty && "editing")} role="region" aria-label="文件预览">{loading ? <EmptyState title="读取工作区…" /> : error ? <EmptyState title="工作区读取失败" detail={error} /> : file ? <TextFileEditor key={file.path} agentId={agentId} file={file} onSaved={setFile} onReload={() => void load(file.path)} onDirtyChange={setDirty} /> : <EmptyState title="未选择文件" detail="选择文件进行预览；文本文件可以点「编辑」修改" />}</div>
   </div>;
 }
+
+const SANDBOX_OPTIONS = [
+  { value: "danger-full-access", title: "不限制", tag: "默认", detail: "能改这台电脑上的任何文件，和你自己在终端里用 Codex 一样。适合只有你在用、需要跨项目干活的 Agent。" },
+  { value: "workspace-write", title: "只改自己的文件夹", tag: "更安全", detail: "其他文件只能看、不能改；联网和收发飞书照常。适合放在群里、很多人都能使唤的 Agent。" },
+] as const;
 
 const AGENTS_TEMPLATE = "# 角色\n\n（这个 Agent 是谁，替谁做事）\n\n# 说话方式\n\n（语气、篇幅、要不要用表情）\n\n# 工作习惯\n\n（遇到什么情况怎么做）\n\n# 不要做的事\n\n";
 const CLAUDE_IMPORTS_AGENTS = "@AGENTS.md\n";
