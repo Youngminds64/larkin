@@ -329,6 +329,8 @@ describe("Agent-centric dashboard workbench", () => {
     await userEvent.click(screen.getByRole("tab", { name: "高级" }));
     const sandbox = await screen.findByLabelText("沙箱模式");
     expect(sandbox).toHaveValue("danger-full-access");
+    expect(screen.getByText("~/.larkin/agents/cli_AgentB2/")).toBeVisible();
+    expect(screen.getByText("~/.larkin/state/agents/cli_AgentB2/")).toBeVisible();
     await userEvent.selectOptions(sandbox, "workspace-write");
     await userEvent.click(screen.getByRole("button", { name: "保存并应用" }));
     await waitFor(() => expect(mutations).toEqual([{ operation: "set-agent-sandbox", agentId: "cli_AgentB2", value: "workspace-write" }]));

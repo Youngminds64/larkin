@@ -538,9 +538,15 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
         <div className="config-grid">
           <label><span>模式</span><select aria-label="沙箱模式" value={String(draft.sandbox || "danger-full-access")} disabled={loading} onChange={(event) => update("sandbox", event.target.value)}><option value="danger-full-access">不限制（danger-full-access）</option><option value="workspace-write">只能写工作区（workspace-write）</option></select></label>
         </div>
-        <p className="field-help">{runtime === "codex"
-          ? "只能写工作区时，Agent 还能联网、写自己的 Inbox 状态和飞书登录信息，但不能改 Larkin 配置，Inbox 巡检的完成回执也会写不进去。保存后自动应用。"
-          : `只对 Codex 生效。当前是 ${runtime}，这项保存了也不会改变它的行为。`}</p>
+        {runtime === "codex" ? <div className="field-help sandbox-scope">
+          <p>选「只能写工作区」后，Agent 只能写这几处，其他位置都只读（包括 Larkin 配置和其他 Agent 的文件），联网不受影响：</p>
+          <ul>
+            <li>自己的工作区 <code>~/.larkin/agents/{agentId}/</code>，AGENTS.md 也在这里</li>
+            <li>自己的状态目录 <code>~/.larkin/state/agents/{agentId}/</code>，存 Inbox、提醒和飞书登录信息</li>
+            <li>临时目录，如 <code>/tmp</code></li>
+          </ul>
+          <p>Inbox 巡检的完成回执会写不进去。保存后自动应用。</p>
+        </div> : <p className="field-help">只对 Codex 生效。当前是 {runtime}，这项保存了也不会改变它的行为。</p>}
       </div>
       {sandboxDirty ? <>{actions}{status}</> : null}
     </section>

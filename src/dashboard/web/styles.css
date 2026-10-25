@@ -272,6 +272,9 @@ button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity:
 .sheet-head p { margin: 4px 0 0; color: var(--subtle); font-size: 11.5px; }
 .settings-form { padding-top: 18px; }
 .field-help { color: var(--subtle); font-size: 11px; }
+.sandbox-scope p { margin: 0; }
+.sandbox-scope ul { margin: 4px 0; padding-left: 18px; list-style: disc; }
+.sandbox-scope li { margin: 2px 0; }
 .compact-sidebar { padding: 16px 0; }
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes slide-in { from { transform: translateX(24px); opacity: .5; } }
