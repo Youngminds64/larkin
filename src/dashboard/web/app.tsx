@@ -13,18 +13,28 @@ const TAB_LABELS: Record<AgentTab, string> = {
 };
 
 const bootstrap = window.__LARKIN_DASHBOARD__ || {
-  packageVersion: "dev", dashboardVersion: "dev", buildFingerprint: "", csrfCapability: "",
+  packageVersion: "dev", dashboardVersion: "dev", buildFingerprint: "", csrfCapability: "", dashboardInstance: "",
 };
 
+/** Fired when the server says this page predates it (restart or new build); App offers a reload. */
+const PAGE_OUTDATED_EVENT = "larkin:page-outdated";
+const UNREACHABLE = "连不上 larkin：服务可能已停止或正在重启。确认 larkin 在运行后刷新页面。";
+
 class JsonResponseError extends Error {
-  constructor(message: string, readonly body: { error?: string; readiness?: RuntimeReadinessView }) { super(message); }
+  constructor(message: string, readonly body: { error?: string; code?: string; readiness?: RuntimeReadinessView }) { super(message); }
 }
 
 async function jsonFetch<T>(url: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, { cache: "no-store", ...init });
+  let response: Response;
+  try { response = await fetch(url, { cache: "no-store", ...init }); }
+  catch (error) {
+    if (init.signal?.aborted) throw error;
+    throw new Error(UNREACHABLE);
+  }
   if (!response.ok) {
-    const body = await response.json().catch(() => ({})) as { error?: string; readiness?: RuntimeReadinessView };
-    throw new JsonResponseError(body.error || `HTTP ${response.status}`, body);
+    const body = await response.json().catch(() => ({})) as { error?: string; code?: string; readiness?: RuntimeReadinessView };
+    if (body.code === "stale_page" || body.code === "outdated_page") window.dispatchEvent(new Event(PAGE_OUTDATED_EVENT));
+    throw new JsonResponseError(body.error || `请求失败（HTTP ${response.status}）`, body);
   }
   return response.json() as Promise<T>;
 }
@@ -89,6 +99,13 @@ function activityLabel(agent: DashboardAgent): string {
   return agent.running ? "空闲" : "离线";
 }
 
+/** The status comes from another dashboard process or build than the one that served this page. */
+export function isPageOutdated(status: Pick<StatusResponse, "buildFingerprint" | "dashboardInstance"> | null | undefined): boolean {
+  if (!status) return false;
+  return Boolean((bootstrap.buildFingerprint && status.buildFingerprint && status.buildFingerprint !== bootstrap.buildFingerprint)
+    || (bootstrap.dashboardInstance && status.dashboardInstance && status.dashboardInstance !== bootstrap.dashboardInstance));
+}
+
 export function useStatusPolling() {
   const [data, setData] = useState<StatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -106,10 +123,6 @@ export function useStatusPolling() {
     try {
       const next = await jsonFetch<StatusResponse>("/api/status", { signal: controller.signal });
       if (!gate.current.accepts(token)) return;
-      if (bootstrap.buildFingerprint && next.buildFingerprint && next.buildFingerprint !== bootstrap.buildFingerprint) {
-        window.location.reload();
-        return;
-      }
       setData(next);
       setError(null);
       setStale(false);
@@ -199,7 +212,11 @@ function AgentSidebar({ agents, selectedId, onSelect, compact = false }: {
   </div>;
 }
 
-function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; onOpenChange: (open: boolean) => void; onSaved: () => void }) {
+function PageOutdatedBanner() {
+  return <div className="stale-banner" role="alert"><AlertTriangle size={15} />larkin 已重启，这个页面已过期，现在保存不会生效。先记下没保存的修改，刷新后重新填写。<Button onClick={() => window.location.reload()}>刷新页面</Button></div>;
+}
+
+function GlobalSettingsSheet({ open, onOpenChange, onSaved, pageOutdated }: { open: boolean; onOpenChange: (open: boolean) => void; onSaved: () => void; pageOutdated: boolean }) {
   const [serverValue, setServerValue] = useState<"require" | "free">("require");
   const [draft, setDraft] = useState<"require" | "free">("require");
   const [serverReplyMode, setServerReplyMode] = useState<"card" | "cli">("card");
@@ -259,6 +276,7 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
     finally { setLoading(false); setSaving(false); }
   };
   return <Sheet open={open} onOpenChange={requestOpenChange} title="全局设置" description="只管理所有 Agent 共同继承的默认值；高级操作仍使用 CLI。">
+    {pageOutdated ? <PageOutdatedBanner /> : null}
     <div className="settings-form">
       <label><span>真人群消息默认策略</span>
         <select value={draft} onChange={(event) => setDraft(event.target.value as "require" | "free")} disabled={loading}>
@@ -917,6 +935,17 @@ export function App() {
   const [workspaceDirty, setWorkspaceDirty] = useState(false);
   const [personaDirty, setPersonaDirty] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // A restarted dashboard (new capability) or a new build no longer accepts this page's writes.
+  const [outdatedReported, setOutdatedReported] = useState(false);
+  const pageOutdated = outdatedReported || isPageOutdated(polling.data);
+  const hasDraft = agentDirty || workspaceDirty || personaDirty || globalOpen;
+  useEffect(() => {
+    const report = () => setOutdatedReported(true);
+    window.addEventListener(PAGE_OUTDATED_EVENT, report);
+    return () => window.removeEventListener(PAGE_OUTDATED_EVENT, report);
+  }, []);
+  // Nothing to lose: reload at once. With an edit open, ask instead of discarding it.
+  useEffect(() => { if (pageOutdated && !hasDraft) window.location.reload(); }, [pageOutdated, hasDraft]);
   const scrollPositions = useRef(new Map<string, number>());
   const agents = polling.data?.agents || [];
   const packageVersion = polling.data?.packageVersion || bootstrap.packageVersion;
@@ -994,6 +1023,7 @@ export function App() {
     <main className="workspace-shell">
       <div className="app-topbar"><Button className="mobile-menu" aria-label="打开 Agent 导航" onClick={() => setMobileOpen(true)}><Menu size={18} /></Button><div><strong>Larkin <span className="brand-version">v{packageVersion}</span></strong><span>{polling.data?.daemon.running ? "运行中" : "未运行"}</span>{polling.stale ? <Badge className="warning">状态陈旧</Badge> : null}</div><Button onClick={() => setGlobalOpen(true)}><Settings2 size={15} /> 全局设置</Button></div>
       {polling.error ? <div className="stale-banner" role="alert"><AlertTriangle size={15} />状态刷新失败，保留最后一次数据：{polling.error}<Button onClick={() => void polling.retry()}>重试</Button></div> : null}
+      {pageOutdated && hasDraft ? <PageOutdatedBanner /> : null}
       {notice ? <div className="notice" role="status">{notice}<Button aria-label="关闭提示" onClick={() => setNotice(null)}>×</Button></div> : null}
       {polling.loading && !polling.data ? <div className="page-loading"><RefreshCw className="spin" />加载 Agent 工作台…</div> : !selected ? <EmptyState title="还没有配置任何 Agent" detail="先运行 larkin setup。" /> : <>
         <AgentHeader agent={selected} />
@@ -1013,7 +1043,7 @@ export function App() {
         </div>
       </>}
     </main>
-    <GlobalSettingsSheet open={globalOpen} onOpenChange={setGlobalOpen} onSaved={refreshConfig} />
+    <GlobalSettingsSheet open={globalOpen} onOpenChange={setGlobalOpen} onSaved={refreshConfig} pageOutdated={pageOutdated} />
     <Sheet open={mobileOpen} onOpenChange={setMobileOpen} title="选择 Agent" description="搜索、查看状态并切换当前工作区。"><AgentSidebar compact agents={agents} selectedId={selectedId} onSelect={selectAgent} /></Sheet>
   </div>;
 }

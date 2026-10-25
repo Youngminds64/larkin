@@ -1,5 +1,5 @@
 import type http from "node:http";
-import { assertWriteRequest, boundedJson } from "./dashboard-config-controller.js";
+import { assertWriteRequest, boundedJson, dashboardError } from "./dashboard-config-controller.js";
 import { collectCapabilities, collectInstructionFiles, collectStandingPrompt, collectWorkspaceEntry, createInstructionFile, writeWorkspaceFile } from "./dashboard-view-model.js";
 
 function statusCodeOf(error: unknown): number {
@@ -21,8 +21,9 @@ export function createDashboardWorkspaceController({ csrfCapability }: { csrfCap
           assertWriteRequest(req, csrfCapability);
           // JSON escaping can roughly double a 1 MB text file.
           body = await boundedJson(req, 3 * 1024 * 1024);
-        } catch {
-          json(res, 403, { error: "workspace write rejected" });
+        } catch (error) {
+          const { status, body: failure } = dashboardError(error, "保存文件失败");
+          json(res, status, failure);
           return true;
         }
         try {
@@ -39,8 +40,9 @@ export function createDashboardWorkspaceController({ csrfCapability }: { csrfCap
         try {
           assertWriteRequest(req, csrfCapability);
           body = await boundedJson(req, 3 * 1024 * 1024);
-        } catch {
-          json(res, 403, { error: "rule file create rejected" });
+        } catch (error) {
+          const { status, body: failure } = dashboardError(error, "新建规则文件失败");
+          json(res, status, failure);
           return true;
         }
         try {

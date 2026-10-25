@@ -349,6 +349,29 @@ describe("Agent-centric dashboard workbench", () => {
     await waitFor(() => expect(applied).toEqual(["cli_AgentB2"]));
   });
 
+  it("keeps the draft and offers a reload when a save is rejected because larkin restarted", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/status") return ok(status);
+      if (url.pathname === "/api/config" && init?.method === "PATCH") {
+        return Promise.resolve({ ok: false, status: 403, json: async () => ({ error: "larkin 已重启，这个页面已过期。刷新页面后再操作。", code: "stale_page" }) });
+      }
+      if (url.pathname === "/api/config") return ok(config(url.searchParams.get("agent") || undefined));
+      if (url.pathname === "/api/models/codex") return ok({ models: [{ id: "default", label: "default" }] });
+      throw new Error(`unexpected request ${url}`);
+    }));
+    render(<App />);
+    await screen.findByRole("heading", { level: 1, name: "Builder" });
+    await userEvent.click(screen.getByRole("tab", { name: "高级" }));
+    await userEvent.selectOptions(await screen.findByLabelText("Inbox 巡检设置"), "on");
+    await userEvent.click(screen.getByRole("button", { name: "保存 Agent 配置" }));
+    const banner = await screen.findByRole("alert");
+    expect(banner).toHaveTextContent("larkin 已重启，这个页面已过期");
+    expect(within(banner).getByRole("button", { name: "刷新页面" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("刷新页面后再操作");
+    expect(screen.getByLabelText("Inbox 巡检设置")).toHaveValue("on");
+  });
+
   it("filters the sidebar and preserves last-known status on polling errors", async () => {
     render(<App />);
     await screen.findByRole("heading", { level: 1, name: "Builder" });
@@ -428,7 +451,7 @@ describe("Agent-centric dashboard workbench", () => {
     await act(async () => { vi.advanceTimersByTime(3_000); await Promise.resolve(); await Promise.resolve(); });
     expect(result.current.data).toBe(status);
     expect(result.current.stale).toBe(true);
-    expect(result.current.error).toBe("poll offline");
+    expect(result.current.error).toBe("连不上 larkin：服务可能已停止或正在重启。确认 larkin 在运行后刷新页面。");
     await act(async () => { await result.current.retry(); });
     expect(result.current.data).toBe(recovered);
     expect(result.current.stale).toBe(false);
