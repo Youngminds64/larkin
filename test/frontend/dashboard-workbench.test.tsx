@@ -152,6 +152,18 @@ describe("Agent-centric dashboard workbench", () => {
     expect(screen.getByText("没有匹配的群")).toBeVisible();
   });
 
+  it("looks up group names only for the reply tab, not for the other tabs or global settings", async () => {
+    window.history.replaceState(null, "", "/?agent=cli_AgentB2&tab=reply");
+    render(<App />);
+    expect(await screen.findByRole("heading", { level: 3, name: "群策略" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "全局设置" }));
+    await screen.findByRole("dialog");
+    const configReads = () => vi.mocked(fetch).mock.calls.map(([input]) => String(input)).filter((url) => url.startsWith("/api/config"));
+    await waitFor(() => expect(configReads()).toContain("/api/config?chats=0"));
+    expect(configReads().filter((url) => !url.includes("chats=0"))).toEqual(["/api/config?agent=cli_AgentB2"]);
+    expect(configReads()).toContain("/api/config?agent=cli_AgentB2&chats=0");
+  });
+
   it("separates global settings and protects an Agent draft before navigation", async () => {
     render(<App />);
     await screen.findByRole("heading", { level: 1, name: "Builder" });

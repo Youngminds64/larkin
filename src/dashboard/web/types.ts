@@ -112,7 +112,8 @@ export interface ConfigAgent {
     effective: { enabled: boolean; intervalMs: number };
     source: { enabled: "default" | "global" | "agent"; intervalMs: "default" | "global" | "agent" };
   };
-  knownChats: KnownChat[];
+  /** Absent when requested with chats=0. */
+  knownChats?: KnownChat[];
   apply: { applyState?: "unknown" | "pending" | "applied" };
 }
 
