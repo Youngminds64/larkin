@@ -324,9 +324,11 @@ export function createClaudeModelDirectoryResolver(options: {
   };
 }
 
-async function sanitizedView(env: Env, chatDirectoryResolver: ChatDirectoryResolver, onlyAgentId?: string, chatId?: string): Promise<Record<string, unknown>> {
+async function sanitizedView(env: Env, chatDirectoryResolver: ChatDirectoryResolver, onlyAgentId?: string, chatId?: string, withChats = true): Promise<Record<string, unknown>> {
   const { config } = loadConfig(env);
   const view = safeConfigView(config, onlyAgentId, chatId, configApplyState(env, config)) as { agents: Array<Record<string, unknown>>; [key: string]: unknown };
+  // Group names come from Feishu, one lookup per Agent; callers that only need the global values skip them.
+  if (!withChats) return view;
   for (const item of view.agents) {
     const agentId = String(item.agentId);
     const agent = config.agents[agentId];
@@ -516,7 +518,7 @@ export function createDashboardConfigController({
         try {
           assertPrivateReadRequest(req, csrfCapability);
           json(res, 200, {
-            ...await sanitizedView(env, chatDirectoryResolver, requestUrl.searchParams.get("agent") || undefined, requestUrl.searchParams.get("chat") || undefined),
+            ...await sanitizedView(env, chatDirectoryResolver, requestUrl.searchParams.get("agent") || undefined, requestUrl.searchParams.get("chat") || undefined, requestUrl.searchParams.get("chats") !== "0"),
             runtimeModels: loadRuntimeModels(),
             runtimeOptions: [...RUNTIME_OPTIONS],
           });

@@ -101,6 +101,21 @@ test("dashboard config lists only explicit chat policies, resolves a missing loc
   assert.deepEqual(after.body.agents[0].knownChats, [], "inherit removes the persisted override and therefore the Dashboard row");
 });
 
+test("GET /api/config?chats=0 returns the global values without looking up any group name", async () => {
+  const { createDashboardConfigController } = await import(`${CONTROLLER}?nochats=${Date.now()}`);
+  const f = fixture();
+  onTestFinished(() => fs.rmSync(f.root, { recursive: true, force: true }));
+  const resolutions = [];
+  const chatDirectoryResolver = { async resolve(input) { resolutions.push(input); return {}; } };
+  const controller = createDashboardConfigController({ csrfCapability: "test", env: f.env, chatDirectoryResolver });
+
+  const response = await get(controller, "/api/config?chats=0");
+  assert.equal(response.status, 200);
+  assert.ok(response.body.mentionPolicy && response.body.agents.length > 0);
+  assert.equal(response.body.agents[0].knownChats, undefined);
+  assert.equal(resolutions.length, 0, "the global settings sheet must not wait on Feishu group lookups");
+});
+
 test("dashboard chat lookup reuses the managed Agent environment that scrubs foreign CLI homes", async () => {
   const workspace = await import(pathToFileURL(path.join(ROOT, "dist/app/agent-lark-cli-workspace.mjs")).href);
   const agent = { agentId: APP, stateDir: "/safe/state", larkConfigDir: "/safe/lark-cli" };

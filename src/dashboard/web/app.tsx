@@ -206,13 +206,14 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
   const [draftReplyMode, setDraftReplyMode] = useState<"card" | "cli">("card");
   const [agentIds, setAgentIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const dirty = draft !== serverValue || draftReplyMode !== serverReplyMode;
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
     setLoading(true);
-    void privateGet<ConfigResponse>("/api/config", { signal: controller.signal }).then((value) => {
+    void privateGet<ConfigResponse>("/api/config?chats=0", { signal: controller.signal }).then((value) => {
       setServerValue(value.mentionPolicy);
       setDraft(value.mentionPolicy);
       setServerReplyMode(value.replyMode ?? "card");
@@ -229,6 +230,7 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
   };
   const save = async () => {
     setLoading(true);
+    setSaving(true);
     try {
       let result: { revision: string; applyState: string } | null = null;
       if (draft !== serverValue) result = await mutateConfig({ operation: "set-global-mention", value: draft });
@@ -254,7 +256,7 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
         : result ? `已保存 · ${replyModeChanged ? "applied" : result.applyState} · ${result.revision.slice(0, 20)}…` : "没有需要保存的修改");
       onSaved();
     } catch (error) { setFeedback(error instanceof Error ? error.message : String(error)); }
-    finally { setLoading(false); }
+    finally { setLoading(false); setSaving(false); }
   };
   return <Sheet open={open} onOpenChange={requestOpenChange} title="全局设置" description="只管理所有 Agent 共同继承的默认值；高级操作仍使用 CLI。">
     <div className="settings-form">
@@ -272,7 +274,7 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
         </select>
       </label>
       <p className="field-help">对所有 Agent 生效。保存后各 Agent 会依次重新加载（保留对话上下文）；正忙的 Agent 会保持待应用。</p>
-      <div className="form-actions"><Button onClick={() => { setDraft(serverValue); setDraftReplyMode(serverReplyMode); }} disabled={!dirty || loading}>放弃草稿</Button><Button className="primary" onClick={save} disabled={!dirty || loading}>{loading ? "保存中…" : "保存全局设置"}</Button></div>
+      <div className="form-actions"><Button onClick={() => { setDraft(serverValue); setDraftReplyMode(serverReplyMode); }} disabled={!dirty || loading}>放弃草稿</Button><Button className="primary" onClick={save} disabled={!dirty || loading}>{saving ? "保存中…" : loading ? "读取中…" : "保存全局设置"}</Button></div>
       {feedback ? <p role="status" className="feedback">{feedback}</p> : null}
     </div>
   </Sheet>;
