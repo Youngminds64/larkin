@@ -191,6 +191,24 @@ test("an unscoped mixed-target poll clears the implicit source instead of choosi
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test("a polled batch replies by command only when no message in it addressed the Agent", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-state-reply-by-"));
+  try {
+    const { createAgentStateStore } = await import(moduleUrl);
+    const store = createAgentStateStore(root, "cli_stateReplyByA1");
+    const target = "chat:oc_reply_by";
+    store.appendNdjson("inbox", { message_id: "om_free_1", target, content: "A", wake: true, reply_by: "command" });
+    store.pollInbox({ target });
+    assert.deepEqual(store.resolveCurrentInboxSource(), { deliveryTarget: target, deliveryAnchor: "om_free_1", replyByCommand: true });
+
+    store.appendNdjson("inbox", { message_id: "om_at", target, content: "@ me", wake: true });
+    store.appendNdjson("inbox", { message_id: "om_free_2", target, content: "B", wake: true, reply_by: "command" });
+    store.pollInbox({ target });
+    assert.deepEqual(store.resolveCurrentInboxSource(), { deliveryTarget: target, deliveryAnchor: "om_free_2" },
+      "an @ in the same batch keeps the reply card");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("implicit reminder source stays bound to the active poll when an unpolled Inbox event races in", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-state-targeted-source-"));
   try {
