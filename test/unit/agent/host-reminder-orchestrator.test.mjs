@@ -10,10 +10,6 @@ import { HostReminderOrchestrator } from "../../../dist/agent/host-reminder-orch
 import { createRuntimeHost } from "../../../dist/runtime/runtime-host.mjs";
 
 const agent = { agentId: "cli_rem", name: "cli_rem", stateDir: "/state/cli_rem" };
-const deterministicProcessInspect = (pid) => ({ ok: true, dead: false, startToken: `test-process-${pid}` });
-const deterministicStateStore = (root, agentId) => createAgentStateStore(root, agentId, {
-  inspectProcess: deterministicProcessInspect,
-});
 
 async function waitFor(condition, label, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs;
@@ -234,7 +230,7 @@ test("fire pins evicted thread and document-comment anchors for protected outbou
   ]) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-reminder-anchor-rebind-"));
     try {
-      const store = deterministicStateStore(root, agent.agentId);
+      const store = createAgentStateStore(root, agent.agentId);
       store.appendNdjson("inbox", { message_id: route.anchor, target: route.target, ...(route.kind ? { kind: route.kind } : {}), content: "source" });
       store.pollInbox({ target: route.target, limit: 1 });
       for (let index = 0; index < 2_048; index += 1) {
@@ -283,7 +279,7 @@ test("due reminder and startup redelivery reach final Runtime input with source-
   const reminder = { reminderId: "target-reminder", version: 1, ownerAgentId: agentId,
     fireAt: "2026-07-16T02:00:00Z", createdAt: "2026-07-15T00:00:00Z", title: "target", status: "scheduled" };
   const f = fixture([reminder]);
-  const store = deterministicStateStore(root, agentId);
+  const store = createAgentStateStore(root, agentId);
   const session = {
     sessionId: "reminder-target-session", listeners: new Set(), prompts: [], steers: [],
     subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); },
@@ -528,7 +524,7 @@ test("orphan startup Inbox appends a durable redelivery envelope and one drain c
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-redelivery-orphan-"));
   const agentId = "cli_orphanA1";
   const realAgent = { agentId, name: agentId, stateDir: path.join(root, "state", "agents", agentId) };
-  const store = deterministicStateStore(root, agentId);
+  const store = createAgentStateStore(root, agentId);
   const session = {
     sessionId: "orphan-session", listeners: new Set(), prompts: [], steers: [],
     subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); },
@@ -566,7 +562,7 @@ test("an existing pending Runtime delivery and its durable startup redelivery ar
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-redelivery-pending-"));
   const agentId = "cli_pendingRedeliveryA1";
   const realAgent = { agentId, name: agentId, stateDir: path.join(root, "state", "agents", agentId) };
-  const store = deterministicStateStore(root, agentId);
+  const store = createAgentStateStore(root, agentId);
   const session = {
     sessionId: "pending-session", listeners: new Set(), prompts: [], steers: [],
     subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); },

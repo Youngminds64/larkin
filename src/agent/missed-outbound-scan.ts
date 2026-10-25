@@ -281,9 +281,21 @@ export function reconcileInboxAuditTargetRetries(registryFile: string, retryFile
   return { recovered, remaining: loadRetryJournal(retryFile).targets.filter((row) => !agentId || row.agent_id === agentId).length };
 }
 
+// Self-contained in both reply modes: the audit turn starts from runtime:reminder,
+// so the explicit reply command is the only delivery path.
 function instruction(target: InboxAuditTarget, receiptValue: string): string {
-  const history = target.target.startsWith("thread:") ? "Use larkin im +threads-messages-list for this exact thread." : "Use larkin im +chat-messages-list for this exact chat.";
-  return `${history} Inspect first. When finished, run larkin inbox audit complete --receipt ${receiptValue} --outcome <no-finding|handled> --json. If a real finding needs a response, use the guarded reply path anchored at ${target.anchor}; otherwise stay silent.`;
+  const [kind, chatId, threadId] = target.target.split(":");
+  const thread = kind === "thread";
+  const read = thread
+    ? `larkin im +threads-messages-list --thread ${threadId} --order desc --page-size 20 --no-reactions --json`
+    : `larkin im +chat-messages-list --chat-id ${chatId} --order desc --page-size 20 --no-reactions --json`;
+  const reply = `larkin im +messages-reply --message-id <om_id> --text '<reply>'${thread ? " --reply-in-thread" : ""} --json`;
+  return [
+    `1. Read this ${thread ? "thread" : "chat"}: \`${read}\`.`,
+    "2. Look for findings, as the standing Inbox Audit rule defines them: an unanswered human ask, or a promised status, result or real @mention that was never sent.",
+    `3. Answer each finding with \`${reply}\`, using that message's om_ id. This command is the only way a reply reaches the chat in this turn.`,
+    `4. Complete the receipt: \`larkin inbox audit complete --receipt ${receiptValue} --outcome handled --json\` after replying, or \`--outcome no-finding\` when there was nothing to answer.`,
+  ].join(" ");
 }
 
 function pendingRows(file: string, agentId: string): StoredTarget[] {

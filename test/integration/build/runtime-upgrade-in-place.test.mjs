@@ -35,9 +35,7 @@ function materialize(name, mutate = () => {}) {
   assert.match(fixture.provenance.capture_method, /exact tagged source/);
   assert.match(fixture.provenance.claim_boundary, /not a customer home.*full historical environment checkout/i);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-runtime-upgrade-in-place-"));
-  const store = createAgentStateStore(root, fixture.agent_id, {
-    inspectProcess: (pid) => ({ ok: true, dead: false, startToken: `issue124-upgrade-${pid}` }),
-  });
+  const store = createAgentStateStore(root, fixture.agent_id);
   fs.mkdirSync(store.paths.root, { recursive: true, mode: 0o700 });
   const files = structuredClone(fixture.files);
   mutate(files);
