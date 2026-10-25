@@ -56,7 +56,7 @@ test("audit registry retains only originally wake=true human group/topic targets
     const chat = audit.targets.find((row) => row.target.startsWith("chat:"));
     assert.match(topic.instruction, /\+threads-messages-list --thread omt_topic /);
     assert.match(topic.instruction, /\+messages-reply --message-id <om_id> --text '<reply>' --reply-in-thread --json/);
-    assert.match(topic.instruction, /om_topic woke you most recently/);
+    assert.match(topic.instruction, /2\. Look for findings/);
     assert.match(chat.instruction, new RegExp(`\\+chat-messages-list --chat-id ${CHAT} `));
     assert.match(chat.instruction, /\+messages-reply --message-id <om_id> --text '<reply>' --json/);
     assert.match(chat.instruction, /only way a reply reaches the chat/);

@@ -292,7 +292,7 @@ function instruction(target: InboxAuditTarget, receiptValue: string): string {
   const reply = `larkin im +messages-reply --message-id <om_id> --text '<reply>'${thread ? " --reply-in-thread" : ""} --json`;
   return [
     `1. Read this ${thread ? "thread" : "chat"}: \`${read}\`.`,
-    `2. A finding is a person's message that asked you something, or awaits a result you promised, with no later reply from you. ${target.anchor} woke you most recently.`,
+    "2. Look for findings, as the standing Inbox Audit rule defines them: an unanswered human ask, or a promised status, result or real @mention that was never sent.",
     `3. Answer each finding with \`${reply}\`, using that message's om_ id. This command is the only way a reply reaches the chat in this turn.`,
     `4. Complete the receipt: \`larkin inbox audit complete --receipt ${receiptValue} --outcome handled --json\` after replying, or \`--outcome no-finding\` when there was nothing to answer.`,
   ].join(" ");
