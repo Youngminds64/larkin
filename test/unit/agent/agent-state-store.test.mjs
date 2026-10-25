@@ -206,6 +206,13 @@ test("a polled batch replies by command only when no message in it addressed the
     store.pollInbox({ target });
     assert.deepEqual(store.resolveCurrentInboxSource(), { deliveryTarget: target, deliveryAnchor: "om_free_2" },
       "an @ in the same batch keeps the reply card");
+
+    // An Inbox audit wakes the Agent with a reminder; it then polls a group message that never woke it.
+    store.appendNdjson("inbox", { message_id: "rem_inbox_audit_1", kind: "reminder", target: "runtime:reminder", content: "audit", wake: true });
+    store.appendNdjson("inbox", { message_id: "om_unwoken", target, content: "C", wake: false });
+    store.pollInbox();
+    assert.deepEqual(store.resolveCurrentInboxSource(), { deliveryTarget: target, deliveryAnchor: "om_unwoken", replyByCommand: true },
+      "a message that never woke the Agent is answered by command, even next to the audit reminder");
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
