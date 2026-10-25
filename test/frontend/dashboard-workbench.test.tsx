@@ -357,19 +357,22 @@ describe("Agent-centric dashboard workbench", () => {
         return Promise.resolve({ ok: false, status: 403, json: async () => ({ error: "larkin 已重启，这个页面已过期。刷新页面后再操作。", code: "stale_page" }) });
       }
       if (url.pathname === "/api/config") return ok(config(url.searchParams.get("agent") || undefined));
-      if (url.pathname === "/api/models/codex") return ok({ models: [{ id: "default", label: "default" }] });
+      if (url.pathname === "/api/workspace") return ok({ kind: "directory", path: "", parent: null, entries: [] });
+      if (url.pathname === "/api/agent-rules") return ok(missingRules());
+      if (url.pathname === "/api/agent-capabilities") return ok({ runtime: "codex", items: [], unsupported: [] });
       throw new Error(`unexpected request ${url}`);
     }));
     render(<App />);
     await screen.findByRole("heading", { level: 1, name: "Builder" });
-    await userEvent.click(screen.getByRole("tab", { name: "高级" }));
-    await userEvent.selectOptions(await screen.findByLabelText("Inbox 巡检设置"), "on");
-    await userEvent.click(screen.getByRole("button", { name: "保存 Agent 配置" }));
-    const banner = await screen.findByRole("alert");
+    await userEvent.click(screen.getByRole("button", { name: "全局设置" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.selectOptions(within(dialog).getByLabelText("真人群消息默认策略"), "require");
+    await userEvent.click(within(dialog).getByRole("button", { name: "保存全局设置" }));
+    const banner = await within(dialog).findByRole("alert");
     expect(banner).toHaveTextContent("larkin 已重启，这个页面已过期");
     expect(within(banner).getByRole("button", { name: "刷新页面" })).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("刷新页面后再操作");
-    expect(screen.getByLabelText("Inbox 巡检设置")).toHaveValue("on");
+    expect(within(dialog).getByRole("status")).toHaveTextContent("刷新页面后再操作");
+    expect(within(dialog).getByLabelText("真人群消息默认策略")).toHaveValue("require");
   });
 
   it("filters the sidebar and preserves last-known status on polling errors", async () => {
