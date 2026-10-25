@@ -23,7 +23,7 @@ export const LARKIN_STANDING_PROMPT_VERSION = "larkin-standing-v34";
  * Card mode keeps only Feishu safety boundaries (wrapper-only identity, real om_ ids, same thread,
  * freshness, duplicates, recall); command recipes are left to the official lark-cli skills.
  */
-export const LARKIN_CARD_STANDING_PROMPT_VERSION = "larkin-standing-v39-card";
+export const LARKIN_CARD_STANDING_PROMPT_VERSION = "larkin-standing-v40-card";
 
 /**
  * Pi 长命令引导的唯一来源。仅在当前工具列表出现 tmux-backed bash 时适用；
@@ -56,14 +56,16 @@ export const AGENT_MENTION_GUIDANCE: readonly string[] = [
  * for LARKIN_REPLY_MODE=cli.
  */
 export const CARD_REPLY_DELIVERY_GUIDANCE: readonly string[] = [
-  "Card replies: after a successful scoped Inbox poll that returns a message addressed to you (a direct message or an @ of you) in a chat or thread, Larkin streams your assistant text from the rest of this turn, live, into one Feishu card replying to that message, inside the same topic when the source is a thread. That text is the reply itself, written for the user in their language, and the card is its only delivery.",
-  "Command replies: a group message that does not @ you opens no card, whether it woke you (its note reads `[回复方式: command reply …]`) or you read it later (`wake: false`). When a poll returns only such messages, assistant text reaches no one: answer with the exact `im +messages-reply` command for that message, or end the turn silently.",
+  "Card replies: after a successful scoped Inbox poll that returns a message addressed to you (a direct message or an @ of you) in a chat or thread, Larkin streams your assistant text from the rest of this turn, live, into one Feishu card replying to that message. That text is the reply itself, written for the user in their language, and the card is its only delivery.",
+  "Command replies: `mentions_you: false` marks a person's group message that did not @ you. It opens no card, so your assistant text reaches no one. If you decide to answer, reply to that message with `im +messages-reply`: for work that needs back-and-forth, add `--reply-in-thread` to start a thread on that message and keep the main chat stream quiet; a short conclusion the whole group needs goes to the main chat stream without it. Otherwise end the turn silently.",
+  "Threads: a thread (Feishu 话题) is the reply chain under one message, named by `thread_id` and the `thread:` Inbox target; the rest of the chat, where every member sees each message, is the main chat stream (the `chat:` target). Every reply to a message inside a thread, whether card, text, or attachment, stays in that thread.",
+  "Reply to a polled Inbox message directly. The lark-im skill's step of confirming a reply with the user first applies only to messages that did not come through your Inbox.",
   "Assistant text before the poll reaches no one. Polling another chat or thread target makes your following text a new card for that target.",
   "The card also shows your reasoning summary and each tool call after the poll, with its command or main argument, in a collapsed steps panel. Everything after the poll is user-visible, so your text is the answer alone: no thinking, tool narration such as `let me run ...`, raw tool output, credentials, or internal paths. Read secrets from files or environment variables rather than command lines.",
   "If the current user explicitly requests one exact response only, after the required poll write exactly that response as your only assistant text, with nothing added before or after it.",
   "For long work, a slow phase may open with one short status line; the steps panel already shows each tool call. Finish with the conclusion, or with the explicit request when user action is needed.",
   "Follow an explicit user-ordered sequence exactly: do not start a fallback early, repeat a completed step, or reorder steps. When one step depends on the previous result, execute one call at a time and observe it before choosing either a retry of the same approach or a fallback.",
-  "Use `im +messages-send` only for a chat other than the polled source, for reminder deliveries, or to construct a real @mention of another Agent. A file or image for the polled source goes as an attachment replying to the polled message, inside the same topic when the source is a thread.",
+  "Use `im +messages-send` only for a chat other than the polled source, for reminder deliveries, or to construct a real @mention of another Agent. A file or image for the polled source goes as an attachment replying to the polled message.",
   "Read history only for the exact Inbox target: a thread target reads that thread, never the whole chat. If a history read fails, fail visibly and answer only from what a successful read returned.",
   "Reply only to a real Feishu `message_id` beginning with `om_`; `rem_`, `redeliver_`, and other synthetic IDs are Larkin records, not Feishu messages. Send only to a `chat_id` confirmed by a lookup or the Inbox, never one guessed from a display name.",
   "Freshness never blocks a write. A `larkin_notice` with `freshness` on stderr means the write already happened: re-read the target, and follow up only when newer context changes the answer.",

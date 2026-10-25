@@ -408,17 +408,11 @@ export class HostEnvelopeProjector {
       names,
       signature: options.signature,
     });
-    // A free-policy group wakes on every human message; most are not for the
-    // Agent, so a reply is an explicit command rather than a streamed card.
-    const unaddressedWake = options.anchorReply !== false && event.chat_type === "group"
-      && !event._sender_is_bot && !event._mentioned_bot && !event._mention_all;
-    if (!unaddressedWake || !/^om_[A-Za-z0-9_-]+$/.test(messageId)) return envelope;
-    const reply = this.larkCommand(`im +messages-reply --message-id ${messageId}${event.thread_id ? " --reply-in-thread" : ""} --text '<回复>' --json`);
-    return {
-      ...envelope,
-      reply_by: "command",
-      content: `${envelope.content}\n[回复方式: command reply。这条消息没有 @ 你，不开卡片，你写的文字不会送达。要回复就运行 ${reply}；不需要回复就直接结束本回合。]`,
-    };
+    // A person's group message without an @ opens no reply card, whether it woke the Agent (a
+    // free-policy group) or is read later. The standing prompt says once how to answer it; the
+    // envelope carries only this fact, so a busy group does not repeat that rule per message.
+    const unaddressed = event.chat_type === "group" && !event._sender_is_bot && !event._mentioned_bot && !event._mention_all;
+    return unaddressed ? { ...envelope, mentions_you: false } : envelope;
   }
 
   createReminderEnvelope(

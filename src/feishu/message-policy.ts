@@ -84,8 +84,8 @@ export interface MessageEnvelope {
   thread_id: string | null;
   parent_channel_type?: "dm" | "channel";
   parent_channel_name?: string;
-  /** A group message that woke the Agent without @-ing it: no reply card; the Agent replies by command. */
-  reply_by?: "command";
+  /** Set only on a person's group message that does not @ the Agent: it opens no reply card. */
+  mentions_you?: false;
 }
 
 export function decideWake(input: WakePolicyInput): WakeDecision {

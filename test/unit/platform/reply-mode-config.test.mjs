@@ -52,21 +52,34 @@ test("global reply mode is stored once, projected onto every Agent and requires 
 test("a per-session reply mode overrides the prompt builder default", () => {
   const builder = new ContextPromptBuilder({ replyMode: "card" });
   const input = { agentId: APP, runtime: "codex" };
-  assert.equal(builder.build(input).version, "larkin-standing-v39-card");
+  assert.equal(builder.build(input).version, "larkin-standing-v40-card");
   assert.equal(builder.build({ ...input, replyMode: "cli" }).version, "larkin-standing-v34");
-  assert.equal(new ContextPromptBuilder().build({ ...input, replyMode: "card" }).version, "larkin-standing-v39-card");
+  assert.equal(new ContextPromptBuilder().build({ ...input, replyMode: "card" }).version, "larkin-standing-v40-card");
 });
 
 test("card prompt drops Feishu reply recipes but keeps the safety boundaries", () => {
   const input = { agentId: APP, runtime: "codex" };
   const card = new ContextPromptBuilder({ replyMode: "card" }).build(input).content;
   const cli = new ContextPromptBuilder({ replyMode: "cli" }).build(input).content;
-  for (const recipe of ["--page-size 10", "im +chat-search --query", "$'First line", "--reply-in-thread", "--text '<exact_body"]) {
+  for (const recipe of ["--page-size 10", "im +chat-search --query", "$'First line", "--text '<exact_body"]) {
     assert.ok(!card.includes(recipe), `card prompt still carries recipe: ${recipe}`);
     assert.ok(cli.includes(recipe), `cli prompt lost recipe: ${recipe}`);
   }
   for (const boundary of ["never invoke bare `lark-cli`", "beginning with `om_`", "`rem_`, `redeliver_`", "never the whole chat",
-    "`duplicate: true`", "Freshness never blocks a write", "inside the same topic when the source is a thread", "im messages delete --message-id"]) {
+    "`duplicate: true`", "Freshness never blocks a write", "stays in that thread", "im messages delete --message-id"]) {
     assert.ok(card.includes(boundary), `card prompt lost boundary: ${boundary}`);
   }
+});
+
+test("card prompt states once how to answer a group message that does not @ the Agent", () => {
+  const card = new ContextPromptBuilder({ replyMode: "card" }).build({ agentId: APP, runtime: "codex" }).content;
+  const rule = card.split("\n").find((line) => line.startsWith("Command replies:")) ?? "";
+  for (const fact of ['`mentions_you: false`', "reaches no one", "If you decide to answer", "`--reply-in-thread` to start a thread on that message", "main chat stream", "end the turn silently"]) {
+    assert.ok(rule.includes(fact), `command-reply rule lost: ${fact}`);
+  }
+  // The official lark-im skill asks to confirm every reply with the user; an Inbox message needs no such step.
+  assert.ok(card.includes("Reply to a polled Inbox message directly."), "card prompt lost the reply authorization");
+  assert.ok(card.includes("a thread (Feishu 话题)"), "card prompt lost the thread definition");
+  assert.ok(card.includes("is the main chat stream (the `chat:` target)"), "card prompt lost the main chat stream definition");
+  assert.ok(!card.includes("回复方式"), "card prompt still points at the removed per-message note");
 });
