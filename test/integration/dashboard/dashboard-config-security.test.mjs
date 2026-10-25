@@ -116,7 +116,8 @@ test("dashboard config API is sanitized, same-origin/CSRF protected, bounded, an
     const applyMissingOrigin = await fetch(`${base}/api/config/apply`, { method: "POST", headers: { "Content-Type": "application/json", "X-Larkin-CSRF": csrf }, body: JSON.stringify({ agentId: APP }) });
     const applyBadCsrf = await fetch(`${base}/api/config/apply`, { method: "POST", headers: { "Content-Type": "application/json", Origin: base, "X-Larkin-CSRF": "bad" }, body: JSON.stringify({ agentId: APP }) });
     const applyOffline = await fetch(`${base}/api/config/apply`, { method: "POST", headers: { "Content-Type": "application/json", Origin: base, "X-Larkin-CSRF": csrf }, body: JSON.stringify({ agentId: APP }) });
-    assert.deepEqual([applyMissingOrigin.status, applyBadCsrf.status, applyOffline.status], [409, 409, 409]);
+    assert.deepEqual([applyMissingOrigin.status, applyBadCsrf.status, applyOffline.status], [403, 403, 409]);
+    assert.equal((await applyOffline.json()).code, "apply_failed");
     const pendingView = await fetch(`${base}/api/config`, { headers: privateHeaders }).then((response) => response.json());
     assert.equal(pendingView.agents[0].apply.applyState, "pending");
   } finally {

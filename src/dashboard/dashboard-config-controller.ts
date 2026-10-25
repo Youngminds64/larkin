@@ -659,7 +659,11 @@ export function createDashboardConfigController({
           }
           markConfigApplied(env, agentId, expectedSignature);
           json(res, 200, { ok: true, agentId, applyState: "applied" });
-        } catch (error) { sendError(res, error, "配置已保存，但应用失败"); }
+        } catch (error) {
+          const { status, body } = dashboardError(error, "配置已保存，但应用失败");
+          // An unreachable runtime is a failed apply of a saved config, not a server error.
+          json(res, status === 500 ? 409 : status, status === 500 ? { ...body, code: "apply_failed" } : body);
+        }
         return true;
       }
       return false;
