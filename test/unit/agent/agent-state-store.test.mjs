@@ -678,31 +678,53 @@ test("Inbox contender retries when the lock directory disappears after guarded r
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test("EPERM inspection of a live Inbox owner fails closed without reclaim", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-state-eperm-lock-"));
+test("the Inbox lock owner records no process identity, so a sandboxed Agent that cannot run ps can still lock", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-state-owner-shape-"));
+  try {
+    const { createAgentStateStore } = await import(moduleUrl);
+    const store = createAgentStateStore(root, "cli_stateOwnerShapeA1");
+    store.writeJson("status", { prepared: true });
+    let owner = null;
+    store.withInboxTransaction(() => {
+      owner = JSON.parse(fs.readFileSync(path.join(`${store.paths.inbox}.lock`, "owner.json"), "utf8"));
+    });
+    assert.deepEqual(Object.keys(owner).sort(), ["createdAt", "nonce", "pid", "version"]);
+    assert.equal(owner.pid, process.pid);
+    assert.equal(fs.existsSync(`${store.paths.inbox}.lock`), false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a live Inbox owner is reclaimed only after it has held the lock for 60 seconds", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-state-stale-lock-"));
   const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 60_000)"], { stdio: "ignore" });
   try {
     const { createAgentStateStore } = await import(moduleUrl);
-    const processState = await import(processStateUrl);
     await new Promise((resolve) => setTimeout(resolve, 100));
-    const childIdentity = processState.inspectProcess(child.pid);
-    assert.equal(childIdentity.ok, true, childIdentity.reason);
-    const store = createAgentStateStore(root, "cli_stateEpermLockA1", {
-      inspectProcess(pid) {
-        if (pid === child.pid) return { ok: false, reason: "kill(0) EPERM" };
-        return processState.inspectProcess(pid);
-      },
-    });
+    const store = createAgentStateStore(root, "cli_stateStaleLockA1");
     store.writeJson("status", { prepared: true });
     const lockDir = `${store.paths.inbox}.lock`;
-    fs.mkdirSync(lockDir, { mode: 0o700 });
-    fs.writeFileSync(path.join(lockDir, "owner.json"), `${JSON.stringify({
-      version: 1, pid: child.pid, processStartToken: childIdentity.startToken,
-      nonce: "00000000-0000-4000-8000-000000000001",
-    })}\n`, { mode: 0o600 });
-    assert.throws(() => store.appendNdjson("inbox", { message_id: "om_eperm" }), /锁等待超时/);
-    assert.equal(fs.existsSync(lockDir), true, "unknown live owner must not be reclaimed");
-    assert.doesNotThrow(() => process.kill(child.pid, 0));
+    const writeOwner = (owner) => {
+      fs.mkdirSync(lockDir, { mode: 0o700 });
+      fs.writeFileSync(path.join(lockDir, "owner.json"), `${JSON.stringify({
+        version: 1, pid: child.pid, nonce: "00000000-0000-4000-8000-000000000003", ...owner,
+      })}\n`, { mode: 0o600 });
+    };
+    writeOwner({ createdAt: Date.now() });
+    assert.throws(() => store.appendNdjson("inbox", { message_id: "om_young_owner" }), /锁等待超时/);
+    assert.equal(fs.existsSync(lockDir), true, "a recent owner must not be reclaimed while alive");
+    fs.rmSync(lockDir, { recursive: true });
+
+    writeOwner({ createdAt: Date.now() - 61_000 });
+    store.appendNdjson("inbox", { message_id: "om_after_stale_owner", chat_id: "oc_lock" });
+    assert.equal(fs.existsSync(lockDir), false);
+
+    // Owners written by older versions carry a start token and no createdAt; the directory mtime stands in.
+    writeOwner({ processStartToken: "legacy-token" });
+    const old = new Date(Date.now() - 61_000);
+    fs.utimesSync(lockDir, old, old);
+    store.appendNdjson("inbox", { message_id: "om_after_legacy_owner", chat_id: "oc_lock" });
+    assert.deepEqual(store.readNdjson("inbox").map((row) => row.message_id), ["om_after_stale_owner", "om_after_legacy_owner"]);
+    assert.equal(fs.existsSync(lockDir), false);
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
       child.kill("SIGKILL");
