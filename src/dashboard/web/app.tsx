@@ -521,11 +521,11 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
     </section>
     <section className="config-section">
       <div className="audit-controls" aria-labelledby="agent-inbox-audit-title">
-        <div className="audit-heading"><div><h3 id="agent-inbox-audit-title">Inbox 巡检</h3><p>每隔一段时间，让 Agent 回头翻一遍最近聊过的群和话题，补上漏回的消息、答应了却没发出的结果。没发现问题就不出声。每次巡检都会消耗模型额度。</p></div><label className="audit-switch"><input aria-label="Inbox 巡检开关" type="checkbox" checked={auditEnabled} disabled={loading} onChange={(event) => update("auditEnabled", event.target.checked)} /><span aria-hidden="true" /><b>{auditEnabled ? "已开启" : "已关闭"}</b></label></div>
+        <div className="audit-heading"><div><h3 id="agent-inbox-audit-title">Inbox 巡检</h3><p>Agent 在群里被叫到之后（有人 @ 它，或这个群设成了不用 @），过一阵子回到那个群或话题再看一遍：当时有没有没回上的，后来有没有人接着找它。该回的补上，没事就不出声。</p></div><label className="audit-switch"><input aria-label="Inbox 巡检开关" type="checkbox" checked={auditEnabled} disabled={loading} onChange={(event) => update("auditEnabled", event.target.checked)} /><span aria-hidden="true" /><b>{auditEnabled ? "已开启" : "已关闭"}</b></label></div>
         <div className="config-grid audit-grid">
           <label><span>巡检间隔（分钟）</span><input aria-label="巡检间隔（分钟）" type="number" min={MIN_AUDIT_GAP_MINUTES} max={MAX_AUDIT_GAP_MINUTES} step="any" inputMode="decimal" value={auditGapMinutes} disabled={loading} onChange={(event) => update("auditGapMinutes", event.target.value)} /></label>
         </div>
-        <p className="field-help">间隔越短，漏回补得越及时，消耗也越多。关闭时也能先调好间隔，不会因此开启巡检。</p>
+        <p className="field-help">只看叫过它的群和话题；从没叫过它的群、私聊都不看。这段时间没人叫它就跳过，不花额度。间隔越短补得越快，额度也花得越多。</p>
       </div>
       {sandboxDirty ? null : <>{actions}{status}</>}
     </section>
