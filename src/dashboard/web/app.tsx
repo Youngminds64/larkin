@@ -297,9 +297,9 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
       </label>
       <p className="field-help">对所有 Agent 生效。保存后各 Agent 会依次重新加载（保留对话上下文）；正忙的 Agent 会保持待应用。</p>
       <div className="audit-controls" aria-labelledby="global-inbox-audit-title">
-        <div className="audit-heading"><div><h3 id="global-inbox-audit-title">Inbox 巡检</h3><p>定时检查仍待处理的入站工作；关闭时不会安排巡检。</p></div><label className="audit-switch"><input aria-label="Inbox 巡检开关" type="checkbox" checked={draftAudit.enabled} disabled={loading} onChange={(event) => setDraftAudit((current) => ({ ...current, enabled: event.target.checked }))} /><span aria-hidden="true" /><b>{draftAudit.enabled ? "已开启" : "已关闭"}</b></label></div>
+        <div className="audit-heading"><div><h3 id="global-inbox-audit-title">Inbox 巡检</h3><p>每隔一段时间，让 Agent 回头翻一遍最近聊过的群和话题，补上漏回的消息、答应了却没发出的结果。没发现问题就不出声。每次巡检都会消耗模型额度。</p></div><label className="audit-switch"><input aria-label="Inbox 巡检开关" type="checkbox" checked={draftAudit.enabled} disabled={loading} onChange={(event) => setDraftAudit((current) => ({ ...current, enabled: event.target.checked }))} /><span aria-hidden="true" /><b>{draftAudit.enabled ? "已开启" : "已关闭"}</b></label></div>
         <label><span>巡检间隔（分钟）</span><input aria-label="全局巡检间隔（分钟）" type="number" min={MIN_AUDIT_GAP_MINUTES} max={MAX_AUDIT_GAP_MINUTES} step="any" inputMode="decimal" value={draftAuditGapMinutes} disabled={loading} onChange={(event) => setDraftAuditGapMinutes(event.target.value)} /></label>
-        <p className="field-help">可在关闭时预先调整；保存间隔本身不会开启巡检。</p>
+        <p className="field-help">间隔越短，漏回补得越及时，消耗也越多。关闭时也能先调好间隔，不会因此开启巡检。</p>
       </div>
       <div className="form-actions"><Button onClick={() => { setDraft(serverValue); setDraftReplyMode(serverReplyMode); setDraftAudit(serverAudit); setDraftAuditGapMinutes(formatAuditGapMinutes(serverAudit.intervalMs)); }} disabled={!dirty || loading}>放弃草稿</Button><Button className="primary" onClick={save} disabled={!dirty || loading}>{loading ? "保存中…" : "保存全局设置"}</Button></div>
       {feedback ? <p role="status" className="feedback">{feedback}</p> : null}
@@ -512,7 +512,7 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
   if (!config) return <EmptyState title="配置不可用" detail={feedback || "请重试"} />;
   const auditEffective = config.inboxAudit.effective;
   const auditSource = config.inboxAudit.source;
-  const auditStateDescription = `${auditSource.enabled === "agent" ? "当前 Agent 已单独设置" : auditSource.enabled === "global" ? "当前使用全局设置" : "当前使用默认设置"}：${auditEffective.enabled ? "已开启" : "已关闭"}，每 ${formatAuditGapMinutes(auditEffective.intervalMs)} 分钟`;
+  const auditStateDescription = `定时回头检查有没有漏回的消息，没问题就不出声。${auditSource.enabled === "agent" ? "现在为这个 Agent 单独设置" : auditSource.enabled === "global" ? "现在跟随全局设置" : "现在使用默认设置"}：${auditEffective.enabled ? "已开启" : "已关闭"}，每 ${formatAuditGapMinutes(auditEffective.intervalMs)} 分钟一次`;
   const applyStateLabel = config.apply.applyState === "pending" ? "待应用" : config.apply.applyState === "applied" ? "已应用" : "状态未知";
   const actions = dirty || (section === "model" && config.apply.applyState === "pending") ? <div className="form-actions">
     {dirty ? <Button disabled={loading} onClick={() => setDraft(serverDraft)}>放弃草稿</Button> : null}
@@ -545,7 +545,7 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
           })}
         </div>
         {runtime === "codex" ? <details className="sandbox-scope">
-          <summary>选「只改自己的文件夹」后，具体能改哪些地方</summary>
+          <summary>选「只改自己的工作区」后，具体能改哪些地方</summary>
           <ul>
             <li>它的工作区 <code>~/.larkin/agents/{agentId}/</code>，AGENTS.md 也在这里</li>
             <li>它的消息、提醒和飞书登录记录 <code>~/.larkin/state/agents/{agentId}/</code></li>
@@ -564,8 +564,8 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
           <label><span>巡检设置</span><select aria-label="Inbox 巡检设置" value={auditEnabled} disabled={loading} onChange={(event) => update("auditEnabled", event.target.value)}><option value="inherit">跟随全局设置</option><option value="on">为此 Agent 开启</option><option value="off">为此 Agent 关闭</option></select></label>
           <label><span>巡检间隔（分钟）</span><input aria-label="Agent 巡检间隔（分钟）" type="number" min={MIN_AUDIT_GAP_MINUTES} max={MAX_AUDIT_GAP_MINUTES} step="any" inputMode="decimal" value={auditGapMinutes} disabled={loading} onChange={(event) => setDraft((current) => ({ ...current, auditGapMinutes: event.target.value, auditIntervalInherited: false }))} /></label>
         </div>
-        <div className="audit-inline-actions"><span>{auditIntervalInherited ? "间隔跟随全局设置；编辑数字后会仅作用于此 Agent。" : "此 Agent 使用单独的巡检间隔。"}</span>{!auditIntervalInherited ? <Button disabled={loading} onClick={() => setDraft((current) => ({ ...current, auditIntervalInherited: true, auditGapMinutes: formatAuditGapMinutes(auditEffective.intervalMs) }))}>间隔跟随全局设置</Button> : null}</div>
-        <p className="field-help">即使关闭巡检，也可保存间隔；间隔修改不会开启巡检。</p>
+        <div className="audit-inline-actions"><span>{auditIntervalInherited ? "间隔跟随全局设置。改这里的数字只影响这个 Agent。" : "这个 Agent 用自己的巡检间隔。"}</span>{!auditIntervalInherited ? <Button disabled={loading} onClick={() => setDraft((current) => ({ ...current, auditIntervalInherited: true, auditGapMinutes: formatAuditGapMinutes(auditEffective.intervalMs) }))}>间隔跟随全局设置</Button> : null}</div>
+        <p className="field-help">间隔越短，漏回补得越及时，消耗也越多。关闭时也能先调好间隔，不会因此开启巡检。</p>
       </div>
       {sandboxDirty ? null : <>{actions}{status}</>}
     </section>
@@ -743,7 +743,7 @@ function Workspace({ agentId, onDirtyChange }: { agentId: string; onDirtyChange:
 
 const SANDBOX_OPTIONS = [
   { value: "danger-full-access", title: "不限制", tag: "默认", detail: "能改这台电脑上的任何文件，和你自己在终端里用 Codex 一样。适合只有你在用、需要跨项目干活的 Agent。" },
-  { value: "workspace-write", title: "只改自己的文件夹", tag: "更安全", detail: "其他文件只能看、不能改；联网和收发飞书照常。适合放在群里、很多人都能使唤的 Agent。" },
+  { value: "workspace-write", title: "只改自己的工作区", tag: "更安全", detail: "其他文件只能看、不能改；联网和收发飞书照常。适合放在群里、很多人都能使唤的 Agent。" },
 ] as const;
 
 const AGENTS_TEMPLATE = "# 角色\n\n（这个 Agent 是谁，替谁做事）\n\n# 说话方式\n\n（语气、篇幅、要不要用表情）\n\n# 工作习惯\n\n（遇到什么情况怎么做）\n\n# 不要做的事\n\n";

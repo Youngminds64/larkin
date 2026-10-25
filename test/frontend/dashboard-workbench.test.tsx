@@ -329,10 +329,10 @@ describe("Agent-centric dashboard workbench", () => {
     await userEvent.click(screen.getByRole("tab", { name: "高级" }));
     const sandbox = await screen.findByRole("radiogroup", { name: "沙箱模式" });
     expect(within(sandbox).getByRole("radio", { name: /不限制/ })).toBeChecked();
-    await userEvent.click(screen.getByText("选「只改自己的文件夹」后，具体能改哪些地方"));
+    await userEvent.click(screen.getByText("选「只改自己的工作区」后，具体能改哪些地方"));
     expect(screen.getByText("~/.larkin/agents/cli_AgentB2/")).toBeVisible();
     expect(screen.getByText("~/.larkin/state/agents/cli_AgentB2/")).toBeVisible();
-    await userEvent.click(within(sandbox).getByRole("radio", { name: /只改自己的文件夹/ }));
+    await userEvent.click(within(sandbox).getByRole("radio", { name: /只改自己的工作区/ }));
     await userEvent.click(screen.getByRole("button", { name: "保存并应用" }));
     await waitFor(() => expect(mutations).toEqual([{ operation: "set-agent-sandbox", agentId: "cli_AgentB2", value: "workspace-write" }]));
     await waitFor(() => expect(applied).toEqual(["cli_AgentB2"]));
