@@ -178,6 +178,13 @@ export interface InstructionFilesResponse {
   }>;
 }
 
+export interface StandingPromptResponse {
+  runtime: string;
+  replyMode: "card" | "cli";
+  version: string;
+  content: string;
+}
+
 export type CapabilityKind = "skill" | "subagent" | "plugin" | "mcp";
 
 export interface CapabilitiesResponse {
