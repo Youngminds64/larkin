@@ -155,7 +155,7 @@ test("inbound, reminder, and restart envelopes retain exact persistence and sequ
   assert.equal(countWakeEnvelopes([JSON.stringify({ wake: true }), "bad", JSON.stringify({ wake: false }), JSON.stringify({ wake: true })]), 2);
 });
 
-test("a person's group message without an @ is marked to reply by command, with its content untouched", () => {
+test("a person's group message without an @ is marked mentions_you: false, with its content untouched", () => {
   const projector = new HostEnvelopeProjector(new HostStateProjection(() => memoryStore()), () => {});
   const base = { chat_id: "oc_chat", chat_type: "group", sender_id: "ou_user", content: "hello",
     thread_id: null, _mentioned_bot: false, _mention_all: false, _sender_is_bot: false };
@@ -165,7 +165,7 @@ test("a person's group message without an @ is marked to reply by command, with 
     ["a message that did not wake the Agent", { ...base, message_id: "om_quiet" }, { anchorReply: false }],
   ]) {
     const envelope = projector.projectInbound(agent, event, options);
-    assert.equal(envelope.reply_by, "command", `${label} replies by command`);
+    assert.equal(envelope.mentions_you, false, `${label} is marked as not mentioning the Agent`);
     assert.equal(envelope.content, "hello", `${label} carries no per-message reply note`);
   }
   for (const [label, event] of [
@@ -175,7 +175,7 @@ test("a person's group message without an @ is marked to reply by command, with 
     ["another bot's message", { ...base, message_id: "om_bot", _sender_is_bot: true }],
   ]) {
     const envelope = projector.projectInbound(agent, event, { anchorReply: true });
-    assert.equal(envelope.reply_by, undefined, `${label} keeps the reply card`);
+    assert.equal(envelope.mentions_you, undefined, `${label} keeps the reply card`);
   }
 });
 

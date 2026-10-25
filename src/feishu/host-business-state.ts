@@ -410,9 +410,9 @@ export class HostEnvelopeProjector {
     });
     // A person's group message without an @ opens no reply card, whether it woke the Agent (a
     // free-policy group) or is read later. The standing prompt says once how to answer it; the
-    // envelope carries only the marker, so a busy group does not repeat that rule per message.
+    // envelope carries only this fact, so a busy group does not repeat that rule per message.
     const unaddressed = event.chat_type === "group" && !event._sender_is_bot && !event._mentioned_bot && !event._mention_all;
-    return unaddressed ? { ...envelope, reply_by: "command" } : envelope;
+    return unaddressed ? { ...envelope, mentions_you: false } : envelope;
   }
 
   createReminderEnvelope(

@@ -74,7 +74,7 @@ test("card prompt drops Feishu reply recipes but keeps the safety boundaries", (
 test("card prompt states once how to answer a group message that does not @ the Agent", () => {
   const card = new ContextPromptBuilder({ replyMode: "card" }).build({ agentId: APP, runtime: "codex" }).content;
   const rule = card.split("\n").find((line) => line.startsWith("Command replies:")) ?? "";
-  for (const fact of ['`reply_by: "command"`', "reaches no one", "new topic on that message", "main chat", "end the turn silently"]) {
+  for (const fact of ['`mentions_you: false`', "reaches no one", "If you decide to answer", "new topic on that message", "main chat", "end the turn silently"]) {
     assert.ok(rule.includes(fact), `command-reply rule lost: ${fact}`);
   }
   assert.ok(!card.includes("回复方式"), "card prompt still points at the removed per-message note");

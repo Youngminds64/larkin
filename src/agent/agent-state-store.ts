@@ -1104,8 +1104,8 @@ export class AgentStateStore {
       if (userSources.length && userTargets.size === 1) {
         // Only a user message that addressed the Agent opens a reply card. A message that never woke it
         // (read later, e.g. by an Inbox audit) carries no `wake` field at all, and one that woke it without
-        // an @ is answered by command; the audit reminder itself is not a user message and does not count.
-        const addressed = envelopes.some((envelope) => envelope.wake === true && envelope.reply_by !== "command"
+        // an @ carries `mentions_you: false`; the audit reminder itself is not a user message and does not count.
+        const addressed = envelopes.some((envelope) => envelope.wake === true && envelope.mentions_you !== false
           && isUserDeliveryTarget(targetKeyOfInboxEnvelope(envelope)));
         state.last_source = { ...userSources.at(-1)!, ...(addressed ? {} : { reply_by: "command" as const }) };
       } else delete state.last_source;
