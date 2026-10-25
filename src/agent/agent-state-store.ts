@@ -17,6 +17,9 @@ const JSON_KEYS: ReadonlySet<string> = new Set([
 const NDJSON_KEYS: ReadonlySet<string> = new Set(["conversation", "inbox"]);
 const INBOX_LOCK_TIMEOUT_MS = 2_000;
 const INBOX_MALFORMED_LOCK_GRACE_MS = 5_000;
+// Inbox operations hold the lock for milliseconds, so an owner without a start token
+// that has held it this long is treated as a crashed process whose pid was reused.
+const INBOX_UNVERIFIED_LOCK_MAX_MS = 60_000;
 const INBOX_LOCK_OWNER_FILE = "owner.json";
 
 function lstatIfExists(file: string): fs.Stats | null {
@@ -280,7 +283,10 @@ interface RuntimeDeliveryStore extends Record<string, unknown> {
 interface InboxLockOwner {
   version: 1;
   pid: number;
-  processStartToken: string;
+  /** Absent when the owner cannot inspect itself, e.g. `ps` is denied inside a Codex workspace-write sandbox. */
+  processStartToken?: string;
+  /** Epoch ms; recorded for owners without a start token so a stale lock can still be reclaimed. */
+  createdAt?: number;
   nonce: string;
 }
 
@@ -293,17 +299,18 @@ export interface AgentStateStoreDependencies {
 
 function newInboxLockOwner(inspect: InspectProcess): InboxLockOwner {
   const inspected = inspect(process.pid);
-  if (!inspected.ok || !inspected.startToken) {
-    throw new Error(`无法读取 Inbox lock owner 身份：${inspected.reason || "metadata incomplete"}`);
-  }
-  return { version: 1, pid: process.pid, processStartToken: inspected.startToken, nonce: crypto.randomUUID() };
+  const nonce = crypto.randomUUID();
+  if (inspected.ok && inspected.startToken) return { version: 1, pid: process.pid, processStartToken: inspected.startToken, nonce };
+  return { version: 1, pid: process.pid, createdAt: Date.now(), nonce };
 }
 
 function validInboxLockOwner(value: unknown): value is InboxLockOwner {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const owner = value as Partial<InboxLockOwner>;
   return owner.version === 1 && Number.isSafeInteger(owner.pid) && Number(owner.pid) > 0
-    && typeof owner.processStartToken === "string" && !!owner.processStartToken
+    && (owner.processStartToken === undefined
+      ? Number.isFinite(owner.createdAt)
+      : typeof owner.processStartToken === "string" && !!owner.processStartToken)
     && typeof owner.nonce === "string" && /^[0-9a-f-]{36}$/i.test(owner.nonce);
 }
 
@@ -388,7 +395,11 @@ export class AgentStateStore {
       return age >= INBOX_MALFORMED_LOCK_GRACE_MS ? "reclaimable" : "unknown";
     }
     const inspected = this.inspect(owner.pid);
-    if (!inspected.ok) return inspected.dead ? "reclaimable" : "unknown";
+    if (inspected.dead) return "reclaimable";
+    if (owner.processStartToken === undefined) {
+      return Date.now() - Number(owner.createdAt) >= INBOX_UNVERIFIED_LOCK_MAX_MS ? "reclaimable" : "unknown";
+    }
+    if (!inspected.ok) return "unknown";
     if (!inspected.startToken) return "unknown";
     return inspected.startToken === owner.processStartToken ? "active" : "reclaimable";
   }
@@ -410,7 +421,8 @@ export class AgentStateStore {
         malformedGraceMs: INBOX_MALFORMED_LOCK_GRACE_MS,
       });
     } catch (error) {
-      if (/lock 已被|无法取得 lock|正在创建|暂不能接管/.test(error instanceof Error ? error.message : String(error))) return false;
+      // A sandboxed process cannot record its own identity for the reclaim lock; it waits for another process to reclaim.
+      if (/lock 已被|无法取得 lock|正在创建|暂不能接管|无法读取当前进程身份/.test(error instanceof Error ? error.message : String(error))) return false;
       throw error;
     }
     try {

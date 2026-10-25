@@ -686,6 +686,63 @@ test("EPERM inspection of a live Inbox owner fails closed without reclaim", asyn
   }
 });
 
+test("a process that cannot inspect itself, like a sandboxed Agent, still takes and releases the Inbox lock", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-state-sandboxed-lock-"));
+  try {
+    const { createAgentStateStore } = await import(moduleUrl);
+    const processState = await import(processStateUrl);
+    const store = createAgentStateStore(root, "cli_stateSandboxLockA1", {
+      inspectProcess(pid) {
+        if (pid === process.pid) return { ok: false, reason: "ps failed" };
+        return processState.inspectProcess(pid);
+      },
+    });
+    store.writeJson("status", { prepared: true });
+    let owner = null;
+    store.withInboxTransaction(() => {
+      owner = JSON.parse(fs.readFileSync(path.join(`${store.paths.inbox}.lock`, "owner.json"), "utf8"));
+    });
+    assert.equal(owner.pid, process.pid);
+    assert.equal(owner.processStartToken, undefined);
+    assert.ok(Number.isFinite(owner.createdAt));
+    store.appendNdjson("inbox", { message_id: "om_sandboxed", chat_id: "oc_lock" });
+    assert.deepEqual(store.readNdjson("inbox").map((row) => row.message_id), ["om_sandboxed"]);
+    assert.equal(fs.existsSync(`${store.paths.inbox}.lock`), false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a live Inbox owner without a start token is reclaimed only after it has held the lock too long", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-state-tokenless-lock-"));
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 60_000)"], { stdio: "ignore" });
+  try {
+    const { createAgentStateStore } = await import(moduleUrl);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const store = createAgentStateStore(root, "cli_stateTokenlessLockA1");
+    store.writeJson("status", { prepared: true });
+    const lockDir = `${store.paths.inbox}.lock`;
+    const writeOwner = (createdAt) => {
+      fs.mkdirSync(lockDir, { mode: 0o700 });
+      fs.writeFileSync(path.join(lockDir, "owner.json"), `${JSON.stringify({
+        version: 1, pid: child.pid, createdAt, nonce: "00000000-0000-4000-8000-000000000003",
+      })}\n`, { mode: 0o600 });
+    };
+    writeOwner(Date.now());
+    assert.throws(() => store.appendNdjson("inbox", { message_id: "om_young_owner" }), /锁等待超时/);
+    assert.equal(fs.existsSync(lockDir), true, "a recent tokenless owner must not be reclaimed while alive");
+    fs.rmSync(lockDir, { recursive: true });
+    writeOwner(Date.now() - 61_000);
+    store.appendNdjson("inbox", { message_id: "om_after_stale_tokenless", chat_id: "oc_lock" });
+    assert.deepEqual(store.readNdjson("inbox").map((row) => row.message_id), ["om_after_stale_tokenless"]);
+    assert.equal(fs.existsSync(lockDir), false);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+      await once(child, "exit");
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("an active Inbox reclaimer is exclusive and its crash orphan is recoverable", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-state-reclaim-owner-"));
   const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 60_000)"], { stdio: "ignore" });
