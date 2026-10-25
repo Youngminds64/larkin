@@ -202,16 +202,12 @@ function AgentSidebar({ agents, selectedId, onSelect, compact = false }: {
 function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; onOpenChange: (open: boolean) => void; onSaved: () => void }) {
   const [serverValue, setServerValue] = useState<"require" | "free">("require");
   const [draft, setDraft] = useState<"require" | "free">("require");
-  const [serverAudit, setServerAudit] = useState({ enabled: false, intervalMs: 15 * 60_000 });
-  const [draftAudit, setDraftAudit] = useState({ enabled: false, intervalMs: 15 * 60_000 });
-  const [draftAuditGapMinutes, setDraftAuditGapMinutes] = useState("15");
   const [serverReplyMode, setServerReplyMode] = useState<"card" | "cli">("card");
   const [draftReplyMode, setDraftReplyMode] = useState<"card" | "cli">("card");
   const [agentIds, setAgentIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const dirty = draft !== serverValue || draftReplyMode !== serverReplyMode
-    || draftAudit.enabled !== serverAudit.enabled || draftAuditGapMinutes !== formatAuditGapMinutes(serverAudit.intervalMs);
+  const dirty = draft !== serverValue || draftReplyMode !== serverReplyMode;
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
@@ -219,9 +215,6 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
     void privateGet<ConfigResponse>("/api/config", { signal: controller.signal }).then((value) => {
       setServerValue(value.mentionPolicy);
       setDraft(value.mentionPolicy);
-      setServerAudit(value.inboxAudit);
-      setDraftAudit(value.inboxAudit);
-      setDraftAuditGapMinutes(formatAuditGapMinutes(value.inboxAudit.intervalMs));
       setServerReplyMode(value.replyMode ?? "card");
       setDraftReplyMode(value.replyMode ?? "card");
       setAgentIds(value.agents.map((agent) => agent.agentId));
@@ -235,31 +228,14 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
     onOpenChange(next);
   };
   const save = async () => {
-    const auditChanged = draftAudit.enabled !== serverAudit.enabled || draftAuditGapMinutes !== formatAuditGapMinutes(serverAudit.intervalMs);
-    const editedIntervalMs = auditChanged ? auditGapFromMinutes(draftAuditGapMinutes) : null;
-    if (auditChanged && editedIntervalMs === null) {
-      setFeedback("巡检间隔必须在 1 到 1440 分钟之间。");
-      return;
-    }
-    const intervalMs = editedIntervalMs ?? serverAudit.intervalMs;
     setLoading(true);
     try {
       let result: { revision: string; applyState: string } | null = null;
       if (draft !== serverValue) result = await mutateConfig({ operation: "set-global-mention", value: draft });
       const replyModeChanged = draftReplyMode !== serverReplyMode;
       if (replyModeChanged) result = await mutateConfig({ operation: "set-global-reply-mode", value: draftReplyMode });
-      if (auditChanged) {
-        result = await mutateConfig({
-          operation: "set-global-inbox-audit",
-          ...(draftAudit.enabled !== serverAudit.enabled ? { enabled: draftAudit.enabled } : {}),
-          ...(draftAuditGapMinutes !== formatAuditGapMinutes(serverAudit.intervalMs) ? { intervalMs } : {}),
-        });
-      }
       setServerValue(draft);
       setServerReplyMode(draftReplyMode);
-      setServerAudit({ ...draftAudit, intervalMs });
-      setDraftAudit((current) => ({ ...current, intervalMs }));
-      setDraftAuditGapMinutes(formatAuditGapMinutes(intervalMs));
       // Reply mode is fixed per Runtime session, so each Agent re-applies; a busy Agent stays pending.
       const unapplied: string[] = [];
       if (replyModeChanged) {
@@ -296,12 +272,7 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
         </select>
       </label>
       <p className="field-help">对所有 Agent 生效。保存后各 Agent 会依次重新加载（保留对话上下文）；正忙的 Agent 会保持待应用。</p>
-      <div className="audit-controls" aria-labelledby="global-inbox-audit-title">
-        <div className="audit-heading"><div><h3 id="global-inbox-audit-title">Inbox 巡检</h3><p>每隔一段时间，让 Agent 回头翻一遍最近聊过的群和话题，补上漏回的消息、答应了却没发出的结果。没发现问题就不出声。每次巡检都会消耗模型额度。</p></div><label className="audit-switch"><input aria-label="Inbox 巡检开关" type="checkbox" checked={draftAudit.enabled} disabled={loading} onChange={(event) => setDraftAudit((current) => ({ ...current, enabled: event.target.checked }))} /><span aria-hidden="true" /><b>{draftAudit.enabled ? "已开启" : "已关闭"}</b></label></div>
-        <label><span>巡检间隔（分钟）</span><input aria-label="全局巡检间隔（分钟）" type="number" min={MIN_AUDIT_GAP_MINUTES} max={MAX_AUDIT_GAP_MINUTES} step="any" inputMode="decimal" value={draftAuditGapMinutes} disabled={loading} onChange={(event) => setDraftAuditGapMinutes(event.target.value)} /></label>
-        <p className="field-help">间隔越短，漏回补得越及时，消耗也越多。关闭时也能先调好间隔，不会因此开启巡检。</p>
-      </div>
-      <div className="form-actions"><Button onClick={() => { setDraft(serverValue); setDraftReplyMode(serverReplyMode); setDraftAudit(serverAudit); setDraftAuditGapMinutes(formatAuditGapMinutes(serverAudit.intervalMs)); }} disabled={!dirty || loading}>放弃草稿</Button><Button className="primary" onClick={save} disabled={!dirty || loading}>{loading ? "保存中…" : "保存全局设置"}</Button></div>
+      <div className="form-actions"><Button onClick={() => { setDraft(serverValue); setDraftReplyMode(serverReplyMode); }} disabled={!dirty || loading}>放弃草稿</Button><Button className="primary" onClick={save} disabled={!dirty || loading}>{loading ? "保存中…" : "保存全局设置"}</Button></div>
       {feedback ? <p role="status" className="feedback">{feedback}</p> : null}
     </div>
   </Sheet>;
@@ -380,14 +351,11 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
       if (!gate.current.accepts(token)) return;
       const agent = next.agents[0];
       if (!agent) throw new Error("配置投影中没有当前 Agent");
-      const intervalMs = agent.inboxAudit.override.intervalMs === "inherit"
-        ? agent.inboxAudit.effective.intervalMs : agent.inboxAudit.override.intervalMs;
       const values = {
         runtime: agent.runtimeOption || agent.runtime, model: agent.model, effort: agent.effort || "default", mention: agent.mention.override,
         sandbox: agent.sandbox || "danger-full-access", fastMode: agent.fastMode === true,
-        auditEnabled: agent.inboxAudit.override.enabled,
-        auditIntervalInherited: agent.inboxAudit.override.intervalMs === "inherit",
-        auditGapMinutes: formatAuditGapMinutes(intervalMs),
+        auditEnabled: agent.inboxAudit.effective.enabled,
+        auditGapMinutes: formatAuditGapMinutes(agent.inboxAudit.effective.intervalMs),
       };
       setResponse(next);
       setServerDraft(values);
@@ -435,12 +403,10 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
   const fastSupported = runtime === "codex" && !(directoryReady && models.find((item) => item.id === model)?.supportsFast === false);
   // Sandbox is a Codex launch parameter, so it is applied the same way as a model change.
   const runtimeDirty = draft.runtime !== serverDraft.runtime || draft.model !== serverDraft.model || draft.effort !== serverDraft.effort || sandboxDirty || fastDirty;
-  const auditEnabled = draft.auditEnabled === "on" || draft.auditEnabled === "off" ? draft.auditEnabled : "inherit";
-  const auditIntervalInherited = draft.auditIntervalInherited === true;
+  const auditEnabled = draft.auditEnabled === true;
   const auditGapMinutes = String(draft.auditGapMinutes || "");
-  const auditDirty = draft.auditEnabled !== serverDraft.auditEnabled
-    || draft.auditIntervalInherited !== serverDraft.auditIntervalInherited
-    || draft.auditGapMinutes !== serverDraft.auditGapMinutes;
+  const auditGapDirty = draft.auditGapMinutes !== serverDraft.auditGapMinutes;
+  const auditDirty = draft.auditEnabled !== serverDraft.auditEnabled || auditGapDirty;
 
   const requestApply = () => jsonFetch<{ agentId: string; applyState: string }>("/api/config/apply", {
     method: "POST",
@@ -451,7 +417,7 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
   const save = async () => {
     if (!config) return;
     const auditIntervalMs = auditGapFromMinutes(draft.auditGapMinutes);
-    if (auditDirty && !auditIntervalInherited && auditIntervalMs === null) {
+    if (auditGapDirty && auditIntervalMs === null) {
       setFeedback("巡检间隔必须在 1 到 1440 分钟之间；草稿已保留。");
       return;
     }
@@ -466,9 +432,8 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
       if (draft.mention !== serverDraft.mention) operations.push({ operation: "set-agent-mention", agentId, value: draft.mention });
       if (auditDirty) operations.push({
         operation: "set-agent-inbox-audit", agentId,
-        ...(draft.auditEnabled !== serverDraft.auditEnabled ? { enabled: auditEnabled === "inherit" ? "inherit" : auditEnabled === "on" } : {}),
-        ...(draft.auditIntervalInherited !== serverDraft.auditIntervalInherited || draft.auditGapMinutes !== serverDraft.auditGapMinutes
-          ? { intervalMs: auditIntervalInherited ? "inherit" : auditIntervalMs! } : {}),
+        ...(draft.auditEnabled !== serverDraft.auditEnabled ? { enabled: auditEnabled } : {}),
+        ...(auditGapDirty ? { intervalMs: auditIntervalMs! } : {}),
       });
       let latest: { revision: string; applyState: string } | null = null;
       for (const operation of operations) latest = await mutateConfig(operation);
@@ -510,9 +475,6 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
 
   if (!config && loading) return <EmptyState title="加载 Agent 配置…" />;
   if (!config) return <EmptyState title="配置不可用" detail={feedback || "请重试"} />;
-  const auditEffective = config.inboxAudit.effective;
-  const auditSource = config.inboxAudit.source;
-  const auditStateDescription = `定时回头检查有没有漏回的消息，没问题就不出声。${auditSource.enabled === "agent" ? "现在为这个 Agent 单独设置" : auditSource.enabled === "global" ? "现在跟随全局设置" : "现在使用默认设置"}：${auditEffective.enabled ? "已开启" : "已关闭"}，每 ${formatAuditGapMinutes(auditEffective.intervalMs)} 分钟一次`;
   const applyStateLabel = config.apply.applyState === "pending" ? "待应用" : config.apply.applyState === "applied" ? "已应用" : "状态未知";
   const actions = dirty || (section === "model" && config.apply.applyState === "pending") ? <div className="form-actions">
     {dirty ? <Button disabled={loading} onClick={() => setDraft(serverDraft)}>放弃草稿</Button> : null}
@@ -559,12 +521,10 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
     </section>
     <section className="config-section">
       <div className="audit-controls" aria-labelledby="agent-inbox-audit-title">
-        <div className="audit-heading"><div><h3 id="agent-inbox-audit-title">Inbox 巡检</h3><p>{auditStateDescription}。</p></div></div>
+        <div className="audit-heading"><div><h3 id="agent-inbox-audit-title">Inbox 巡检</h3><p>每隔一段时间，让 Agent 回头翻一遍最近聊过的群和话题，补上漏回的消息、答应了却没发出的结果。没发现问题就不出声。每次巡检都会消耗模型额度。</p></div><label className="audit-switch"><input aria-label="Inbox 巡检开关" type="checkbox" checked={auditEnabled} disabled={loading} onChange={(event) => update("auditEnabled", event.target.checked)} /><span aria-hidden="true" /><b>{auditEnabled ? "已开启" : "已关闭"}</b></label></div>
         <div className="config-grid audit-grid">
-          <label><span>巡检设置</span><select aria-label="Inbox 巡检设置" value={auditEnabled} disabled={loading} onChange={(event) => update("auditEnabled", event.target.value)}><option value="inherit">跟随全局设置</option><option value="on">为此 Agent 开启</option><option value="off">为此 Agent 关闭</option></select></label>
-          <label><span>巡检间隔（分钟）</span><input aria-label="Agent 巡检间隔（分钟）" type="number" min={MIN_AUDIT_GAP_MINUTES} max={MAX_AUDIT_GAP_MINUTES} step="any" inputMode="decimal" value={auditGapMinutes} disabled={loading} onChange={(event) => setDraft((current) => ({ ...current, auditGapMinutes: event.target.value, auditIntervalInherited: false }))} /></label>
+          <label><span>巡检间隔（分钟）</span><input aria-label="巡检间隔（分钟）" type="number" min={MIN_AUDIT_GAP_MINUTES} max={MAX_AUDIT_GAP_MINUTES} step="any" inputMode="decimal" value={auditGapMinutes} disabled={loading} onChange={(event) => update("auditGapMinutes", event.target.value)} /></label>
         </div>
-        <div className="audit-inline-actions"><span>{auditIntervalInherited ? "间隔跟随全局设置。改这里的数字只影响这个 Agent。" : "这个 Agent 用自己的巡检间隔。"}</span>{!auditIntervalInherited ? <Button disabled={loading} onClick={() => setDraft((current) => ({ ...current, auditIntervalInherited: true, auditGapMinutes: formatAuditGapMinutes(auditEffective.intervalMs) }))}>间隔跟随全局设置</Button> : null}</div>
         <p className="field-help">间隔越短，漏回补得越及时，消耗也越多。关闭时也能先调好间隔，不会因此开启巡检。</p>
       </div>
       {sandboxDirty ? null : <>{actions}{status}</>}

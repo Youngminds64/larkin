@@ -176,7 +176,7 @@ button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity:
 .audit-controls { display: grid; gap: 12px; }
 .audit-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .audit-heading h3 { margin: 0; font: 600 15px Georgia, serif; }
-.audit-heading p, .audit-inline-actions { margin: 3px 0 0; color: var(--subtle); font-size: 11px; line-height: 1.5; }
+.audit-heading p { margin: 3px 0 0; color: var(--subtle); font-size: 11px; line-height: 1.5; }
 .audit-switch { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 7px; color: var(--ink); font-size: 11px; font-weight: 600; white-space: nowrap; }
 .audit-switch input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .audit-switch > span { width: 32px; height: 18px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); transition: background-color .18s ease, border-color .18s ease; }
@@ -189,8 +189,6 @@ button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity:
 .fast-mode-row .field-help { margin: 2px 0 0; }
 .audit-switch input:disabled + span { opacity: .55; }
 .audit-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.audit-inline-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.audit-inline-actions .ui-button { flex: 0 0 auto; }
 .form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .feedback { margin: 10px 0 0; color: var(--subtle); font-size: 11px; }
 .table-search { min-width: min(300px, 42vw); padding: 7px 9px; }
@@ -318,7 +316,7 @@ button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity:
   .overview-sections { grid-template-columns: 1fr; gap: 22px; }
   .config-grid { grid-template-columns: 1fr; }
   .audit-grid { grid-template-columns: 1fr; }
-  .audit-heading, .audit-inline-actions { display: grid; }
+  .audit-heading { display: grid; }
   .audit-switch { justify-self: start; }
   .section-heading { display: block; }
   .capability-layout { grid-template-columns: minmax(0, 1fr); }

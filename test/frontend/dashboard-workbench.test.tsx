@@ -169,44 +169,6 @@ describe("Agent-centric dashboard workbench", () => {
     expect(window.location.search).toContain("agent=cli_AgentB2");
   });
 
-  it("saves global Inbox audit controls through the existing protected mutation", async () => {
-    const mutations: Array<Record<string, unknown>> = [];
-    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/status") return ok(status);
-      if (url.pathname === "/api/config" && init?.method === "PATCH") {
-        mutations.push(JSON.parse(String(init.body)));
-        return ok({ revision: "sha256:global-audit", applyState: "saved_not_applied" });
-      }
-      if (url.pathname === "/api/config") return ok(config(url.searchParams.get("agent") || undefined));
-      if (url.pathname === "/api/models/codex") return ok({ models: [{ id: "default", label: "default" }] });
-      throw new Error(`unexpected request ${url}`);
-    }));
-    render(<App />);
-    await screen.findByRole("heading", { level: 1, name: "Builder" });
-    await userEvent.click(screen.getByRole("button", { name: "全局设置" }));
-    const dialog = await screen.findByRole("dialog");
-    const gap = within(dialog).getByLabelText("全局巡检间隔（分钟）");
-    await userEvent.clear(gap);
-    await userEvent.type(gap, "0");
-    await userEvent.click(within(dialog).getByRole("button", { name: "保存全局设置" }));
-    expect(within(dialog).getByRole("status")).toHaveTextContent("巡检间隔必须在 1 到 1440 分钟之间");
-    expect(gap).toHaveValue(0);
-    expect(mutations).toEqual([]);
-    await userEvent.clear(gap);
-    await userEvent.type(gap, "30");
-    await userEvent.click(within(dialog).getByRole("button", { name: "保存全局设置" }));
-    await waitFor(() => expect(mutations).toEqual([{ operation: "set-global-inbox-audit", intervalMs: 30 * 60_000 }]));
-    expect(within(dialog).getByLabelText("Inbox 巡检开关")).not.toBeChecked();
-    await userEvent.click(within(dialog).getByLabelText("Inbox 巡检开关"));
-    await userEvent.click(within(dialog).getByRole("button", { name: "保存全局设置" }));
-    await waitFor(() => expect(mutations).toEqual([
-      { operation: "set-global-inbox-audit", intervalMs: 30 * 60_000 },
-      { operation: "set-global-inbox-audit", enabled: true },
-    ]));
-    expect(within(dialog).getByRole("status")).toHaveTextContent("已保存");
-  });
-
   it("saves the global reply mode and re-applies it to every Agent, reporting busy ones", async () => {
     const mutations: Array<Record<string, unknown>> = [];
     const applied: string[] = [];
@@ -253,18 +215,16 @@ describe("Agent-centric dashboard workbench", () => {
     expect(screen.queryByRole("heading", { name: "处理中表情" })).not.toBeInTheDocument();
   });
 
-  it("keeps a precise existing audit gap when saving a different global setting", async () => {
+  it("keeps Inbox audit out of 全局设置 and turns it on per Agent", async () => {
     const mutations: Array<Record<string, unknown>> = [];
-    const persisted = config();
-    persisted.inboxAudit = { enabled: false, intervalMs: 60_060 };
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), "http://localhost");
       if (url.pathname === "/api/status") return ok(status);
       if (url.pathname === "/api/config" && init?.method === "PATCH") {
         mutations.push(JSON.parse(String(init.body)));
-        return ok({ revision: "sha256:precise-gap", applyState: "saved_not_applied" });
+        return ok({ revision: "sha256:agent-audit", applyState: "saved_not_applied" });
       }
-      if (url.pathname === "/api/config") return ok(persisted);
+      if (url.pathname === "/api/config") return ok(config(url.searchParams.get("agent") || undefined));
       if (url.pathname === "/api/models/codex") return ok({ models: [{ id: "default", label: "default" }] });
       throw new Error(`unexpected request ${url}`);
     }));
@@ -272,11 +232,15 @@ describe("Agent-centric dashboard workbench", () => {
     await screen.findByRole("heading", { level: 1, name: "Builder" });
     await userEvent.click(screen.getByRole("button", { name: "全局设置" }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByLabelText("全局巡检间隔（分钟）")).toHaveValue(1.001);
-    await userEvent.selectOptions(within(dialog).getByLabelText("真人群消息默认策略"), "require");
-    await userEvent.click(within(dialog).getByRole("button", { name: "保存全局设置" }));
-    await waitFor(() => expect(mutations).toEqual([{ operation: "set-global-mention", value: "require" }]));
-    expect(within(dialog).getByRole("status")).toHaveTextContent("已保存");
+    expect(within(dialog).queryByText("Inbox 巡检")).not.toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "关闭面板" }));
+    await userEvent.click(screen.getByRole("tab", { name: "高级" }));
+    const toggle = await screen.findByLabelText("Inbox 巡检开关");
+    expect(toggle).not.toBeChecked();
+    expect(screen.queryByRole("button", { name: "间隔跟随全局设置" })).not.toBeInTheDocument();
+    await userEvent.click(toggle);
+    await userEvent.click(screen.getByRole("button", { name: "保存 Agent 配置" }));
+    await waitFor(() => expect(mutations).toEqual([{ operation: "set-agent-inbox-audit", agentId: "cli_AgentB2", enabled: true }]));
   });
 
   it("keeps an Agent Inbox audit draft visible after a rejected save", async () => {
@@ -295,15 +259,20 @@ describe("Agent-centric dashboard workbench", () => {
     render(<App />);
     await screen.findByRole("heading", { level: 1, name: "Builder" });
     await userEvent.click(screen.getByRole("tab", { name: "高级" }));
-    await userEvent.selectOptions(await screen.findByLabelText("Inbox 巡检设置"), "on");
-    const gap = screen.getByLabelText("Agent 巡检间隔（分钟）");
+    await userEvent.click(await screen.findByLabelText("Inbox 巡检开关"));
+    const gap = screen.getByLabelText("巡检间隔（分钟）");
+    await userEvent.clear(gap);
+    await userEvent.type(gap, "0");
+    await userEvent.click(screen.getByRole("button", { name: "保存 Agent 配置" }));
+    expect(screen.getByRole("status")).toHaveTextContent("巡检间隔必须在 1 到 1440 分钟之间");
+    expect(mutations).toEqual([]);
     await userEvent.clear(gap);
     await userEvent.type(gap, "30");
     await userEvent.click(screen.getByRole("button", { name: "保存 Agent 配置" }));
     await waitFor(() => expect(mutations).toEqual([{ operation: "set-agent-inbox-audit", agentId: "cli_AgentB2", enabled: true, intervalMs: 30 * 60_000 }]));
     expect(screen.getByRole("status")).toHaveTextContent("configuration update rejected");
-    expect(screen.getByLabelText("Inbox 巡检设置")).toHaveValue("on");
-    expect(screen.getByLabelText("Agent 巡检间隔（分钟）")).toHaveValue(30);
+    expect(screen.getByLabelText("Inbox 巡检开关")).toBeChecked();
+    expect(screen.getByLabelText("巡检间隔（分钟）")).toHaveValue(30);
   });
 
   it("saves the Codex sandbox from 高级 and applies it like a model change", async () => {
