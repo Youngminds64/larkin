@@ -713,6 +713,7 @@ test("PATCH set-agent-sandbox saves the Codex sandbox and GET projects it", asyn
   const rejected = await patch(controller, { operation: "set-agent-sandbox", agentId: APP, value: "read-only" });
   assert.equal(rejected.status, 400);
   assert.equal(fs.readFileSync(path.join(f.root, "config.json"), "utf8"), before);
+});
 
 test("a request from a page that predates the dashboard is told to reload, not given a generic rejection", async () => {
   const { createDashboardConfigController, dashboardError } = await import(`${CONTROLLER}?stale-page=${Date.now()}`);
