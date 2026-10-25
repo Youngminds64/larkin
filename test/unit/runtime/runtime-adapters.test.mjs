@@ -462,6 +462,38 @@ test("Codex resume failure falls back to a fresh thread with the same standing p
   assert.equal(fallback.params.developerInstructions, "standing");
 });
 
+test("Codex sandbox defaults to danger-full-access and workspace-write keeps network plus Larkin state writable", async () => {
+  const startParams = async (overrides) => {
+    const child = new FakeProcess();
+    await createNativeRuntimeAdapter("codex", { spawn: () => child }).createSession(create(overrides));
+    child.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`);
+    await new Promise((resolve) => setImmediate(resolve));
+    return child.writes.find((request) => request.method === "thread/start").params;
+  };
+  const legacy = await startParams({ reasoningEffort: "high" });
+  assert.equal(legacy.approvalPolicy, "never");
+  assert.equal(legacy.sandbox, "danger-full-access");
+  assert.deepEqual(legacy.config, { model_reasoning_effort: "high" });
+
+  const restricted = await startParams({
+    sandbox: "workspace-write", reasoningEffort: "medium", stateDir: "/tmp/larkin-root/state/agents/cli_test",
+    env: { LARKIN_TELEMETRY_SPOOL_DIR: "/tmp/larkin-root/telemetry/spool" },
+  });
+  assert.equal(restricted.approvalPolicy, "never");
+  assert.equal(restricted.sandbox, "workspace-write");
+  assert.deepEqual(restricted.config, {
+    model_reasoning_effort: "medium",
+    sandbox_workspace_write: {
+      network_access: true,
+      // Roots are resolved, so Windows turns these into drive-qualified paths.
+      writable_roots: ["/tmp/larkin-root/state/agents/cli_test", "/tmp/larkin-root/telemetry/spool"].map((root) => path.resolve(root)),
+    },
+  });
+  assert.ok(!restricted.config.sandbox_workspace_write.writable_roots.includes("/tmp/larkin-root"));
+  assert.equal(Object.hasOwn(legacy, "serviceTier"), false, "fast mode off leaves the tier to the user's Codex config");
+  assert.equal((await startParams({ fastMode: true })).serviceTier, "fast");
+});
+
 test("Codex rejects unsupported app-server requests without treating them as notifications", async () => {
   const child = new FakeProcess();
   await createNativeRuntimeAdapter("codex", { spawn: () => child }).createSession(create());

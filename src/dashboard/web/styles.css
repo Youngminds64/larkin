@@ -172,7 +172,7 @@ button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity:
 .audit-controls { display: grid; gap: 12px; }
 .audit-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .audit-heading h3 { margin: 0; font: 600 15px Georgia, serif; }
-.audit-heading p, .audit-inline-actions { margin: 3px 0 0; color: var(--subtle); font-size: 11px; line-height: 1.5; }
+.audit-heading p { margin: 3px 0 0; color: var(--subtle); font-size: 11px; line-height: 1.5; }
 .audit-switch { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 7px; color: var(--ink); font-size: 11px; font-weight: 600; white-space: nowrap; }
 .audit-switch input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .audit-switch > span { width: 32px; height: 18px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); transition: background-color .18s ease, border-color .18s ease; }
@@ -180,10 +180,11 @@ button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity:
 .audit-switch input:checked + span { border-color: var(--accent); background: var(--accent); }
 .audit-switch input:checked + span::after { transform: translateX(14px); background: var(--paper); }
 .audit-switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 3px; }
+.fast-mode-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 14px; }
+.fast-mode-row strong { font-size: 13px; }
+.fast-mode-row .field-help { margin: 2px 0 0; }
 .audit-switch input:disabled + span { opacity: .55; }
 .audit-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.audit-inline-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.audit-inline-actions .ui-button { flex: 0 0 auto; }
 .form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .feedback { margin: 10px 0 0; color: var(--subtle); font-size: 11px; }
 .table-search { min-width: min(300px, 42vw); padding: 7px 9px; }
@@ -266,6 +267,20 @@ button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity:
 .sheet-head p { margin: 4px 0 0; color: var(--subtle); font-size: 11.5px; }
 .settings-form { padding-top: 18px; }
 .field-help { color: var(--subtle); font-size: 11px; }
+.sandbox-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.sandbox-option { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--paper); cursor: pointer; }
+.sandbox-option.active { border-color: var(--accent); background: var(--accent-soft); }
+.sandbox-option input { margin: 3px 0 0; accent-color: var(--accent); }
+.sandbox-option-text { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 8px; min-width: 0; }
+.sandbox-option strong { font-size: 13px; }
+.sandbox-option-text .ui-badge { justify-self: start; }
+.sandbox-option small { grid-column: 1 / -1; color: var(--subtle); font-size: 11px; line-height: 1.55; }
+.sandbox-scope { color: var(--subtle); font-size: 11px; line-height: 1.6; }
+.sandbox-scope summary { cursor: pointer; color: var(--ink); font-weight: 600; }
+.sandbox-scope p { margin: 0; }
+.sandbox-scope ul { margin: 4px 0; padding-left: 18px; list-style: disc; }
+.sandbox-scope li { margin: 2px 0; }
+@media (max-width: 720px) { .sandbox-options { grid-template-columns: 1fr; } }
 .compact-sidebar { padding: 16px 0; }
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes slide-in { from { transform: translateX(24px); opacity: .5; } }
@@ -298,7 +313,7 @@ button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity:
   .overview-sections { grid-template-columns: 1fr; gap: 22px; }
   .config-grid { grid-template-columns: 1fr; }
   .audit-grid { grid-template-columns: 1fr; }
-  .audit-heading, .audit-inline-actions { display: grid; }
+  .audit-heading { display: grid; }
   .audit-switch { justify-self: start; }
   .section-heading { display: block; }
   .capability-layout { grid-template-columns: minmax(0, 1fr); }
