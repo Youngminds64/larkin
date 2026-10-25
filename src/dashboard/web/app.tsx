@@ -4,7 +4,7 @@ import {
   Gauge, Menu, MessageSquareText, RefreshCw, ScrollText, Search, Settings2, SlidersHorizontal, Users, XCircle,
 } from "lucide-react";
 import { AGENT_TABS, createLatestResponseGate, filterAgents, parseRoute, reconcileAgentId, routeSearch, sameDraft, type AgentTab } from "./dashboard-state";
-import type { CapabilitiesResponse, CapabilityKind, ConfigAgent, ConfigResponse, DashboardAgent, InstructionFilesResponse, RuntimeModel, RuntimeReadinessView, StatusResponse, WorkspaceProjection } from "./types";
+import type { CapabilitiesResponse, CapabilityKind, ConfigAgent, ConfigResponse, DashboardAgent, InstructionFilesResponse, RuntimeModel, RuntimeReadinessView, StandingPromptResponse, StatusResponse, WorkspaceProjection } from "./types";
 import { Badge, Button, EmptyState, Sheet, cn } from "./components/ui";
 import { RUNTIME_OPTIONS } from "../../runtime/user-runtime.js";
 
@@ -756,14 +756,14 @@ function AgentPersona({ agent, onDirtyChange }: { agent: DashboardAgent; onDirty
     : claudeView?.file ? <>当前是 Claude runtime，读取的是 CLAUDE.md。它有单独的内容，没有引用 AGENTS.md，可以在「工作区」里编辑。</>
     : agentsView?.file ? <>当前是 Claude runtime，还没有 CLAUDE.md，这份设定不会被读取。<Button disabled={creating} onClick={() => void createFiles([{ name: "CLAUDE.md", content: CLAUDE_IMPORTS_AGENTS }])}>新建 CLAUDE.md 并引用 AGENTS.md</Button></>
     : null;
-  const [view, setView] = useState<"agents" | CapabilityKind>("agents");
+  const [view, setView] = useState<"agents" | "builtin" | CapabilityKind>("agents");
   // Runtime decides which folders hold the capabilities, so reload them when it changes.
   const capabilities = useCapabilities(agentId, agent.runtime);
   const countOf = (kind: CapabilityKind) => capabilities.data?.items.filter((item) => item.kind === kind).length;
   return <section className="persona-section">
     <div className="persona-switch" role="group" aria-label="设定分类">
-      {(["agents", ...CAPABILITY_KINDS] as const).map((item) => <button key={item} type="button" aria-pressed={view === item} className={view === item ? "active" : ""} onClick={() => setView(item)}>
-        {item === "agents" ? "AGENTS.md" : CAPABILITY_LABELS[item]}{item !== "agents" && countOf(item) !== undefined && !capabilities.data?.unsupported.includes(item) ? <small>{countOf(item)}</small> : null}
+      {(["agents", "builtin", ...CAPABILITY_KINDS] as const).map((item) => <button key={item} type="button" aria-pressed={view === item} className={view === item ? "active" : ""} onClick={() => setView(item)}>
+        {item === "agents" ? "AGENTS.md" : item === "builtin" ? "内置指令" : CAPABILITY_LABELS[item]}{item !== "agents" && item !== "builtin" && countOf(item) !== undefined && !capabilities.data?.unsupported.includes(item) ? <small>{countOf(item)}</small> : null}
       </button>)}
     </div>
     <div hidden={view !== "agents"}>
@@ -784,8 +784,34 @@ function AgentPersona({ agent, onDirtyChange }: { agent: DashboardAgent; onDirty
         </div>
         : null}
     </div>
-    {view !== "agents" ? <CapabilityList agent={agent} kind={view} state={capabilities} /> : null}
+    {view === "builtin" ? <StandingPromptView agent={agent} /> : null}
+    {view !== "agents" && view !== "builtin" ? <CapabilityList agent={agent} kind={view} state={capabilities} /> : null}
   </section>;
+}
+
+/** Read-only view of the instructions Larkin adds to every new session; users customize through AGENTS.md instead. */
+function StandingPromptView({ agent }: { agent: DashboardAgent }) {
+  const [data, setData] = useState<StandingPromptResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const gate = useRef(createLatestResponseGate());
+  const agentId = agent.agentId;
+  const load = useCallback(async () => {
+    const token = gate.current.issue();
+    try {
+      const value = await jsonFetch<StandingPromptResponse>(`/api/agent-standing-prompt?agent=${encodeURIComponent(agentId)}`);
+      if (!gate.current.accepts(token)) return;
+      setData(value);
+      setError(null);
+    } catch (reason) { if (gate.current.accepts(token)) setError(reason instanceof Error ? reason.message : String(reason)); }
+  }, [agentId]);
+  useEffect(() => { void load(); }, [load, agent.runtime]);
+  if (error) return <EmptyState title="内置指令读取失败" detail={error} />;
+  if (!data) return <EmptyState title="读取内置指令…" />;
+  return <div className="standing-prompt">
+    <div className="section-heading"><div><p>larkin 每次开新会话时自动加给 Agent 的指令，只读。想补充或调整行为，写进 AGENTS.md，两者会同时生效；尽量不要和这里的规则冲突。</p></div><Button onClick={() => void load()}>刷新</Button></div>
+    <div className="capability-detail-badges"><Badge>{data.version}</Badge><Badge>{data.runtime}</Badge><Badge>{data.replyMode === "card" ? "卡片回复" : "命令行回复"}</Badge></div>
+    <div className="workspace-preview" role="region" aria-label="内置指令内容"><pre>{data.content}</pre></div>
+  </div>;
 }
 
 const CAPABILITY_KINDS = ["skill", "subagent", "plugin", "mcp"] as const satisfies readonly CapabilityKind[];

@@ -865,6 +865,31 @@ describe("Agent-centric dashboard workbench", () => {
     expect(screen.getByText("pi 不支持 Subagent")).toBeVisible();
   });
 
+  it("shows the read-only built-in instructions next to AGENTS.md in 设定", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/status") return ok(status);
+      if (url.pathname === "/api/config") return ok(config(url.searchParams.get("agent") || undefined));
+      if (url.pathname.startsWith("/api/models/")) return ok({ models: [{ id: "default", label: "default" }] });
+      if (url.pathname === "/api/workspace") return ok({ kind: "directory", path: "", parent: null, entries: [] });
+      if (url.pathname === "/api/agent-rules") return ok(missingRules());
+      if (url.pathname === "/api/agent-capabilities") return ok({ runtime: "codex", items: [], unsupported: [] });
+      if (url.pathname === "/api/agent-standing-prompt") {
+        expect(url.searchParams.get("agent")).toBe("cli_AgentB2");
+        return ok({ runtime: "codex", replyMode: "card", version: "larkin-standing-v36-card", content: "# Larkin standing instructions\n\nYou are Builder." });
+      }
+      throw new Error(`unexpected request ${url}`);
+    }));
+    render(<App />);
+    await screen.findByRole("heading", { level: 1, name: "Builder" });
+    await userEvent.click(await screen.findByRole("button", { name: "内置指令" }));
+    const content = await screen.findByRole("region", { name: "内置指令内容" });
+    expect(content).toHaveTextContent("You are Builder.");
+    expect(screen.getByText("larkin-standing-v36-card")).toBeVisible();
+    expect(screen.getByText("卡片回复")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "编辑" })).not.toBeInTheDocument();
+  });
+
   it("does not render Provider Credentials and keeps only three runtime options", async () => {
     window.history.replaceState(null, "", "/?agent=cli_AgentC3&tab=configuration");
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
