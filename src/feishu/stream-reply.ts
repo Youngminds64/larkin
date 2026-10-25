@@ -18,6 +18,10 @@
 // tool call, so the source is re-resolved after tool activity and at a bounded
 // interval; output produced before any poll has no anchor and is not delivered.
 //
+// A group message that woke the Agent without an @, or never woke it (an Inbox
+// audit reads it later), opens no card: the Agent replies by command, so
+// deciding to stay silent leaves nothing in the group.
+//
 // The mode is the global `replyMode` in Larkin config (dashboard 全局设置), else LARKIN_REPLY_MODE;
 // `cli` restores the legacy model-driven `+messages-reply`.
 
@@ -25,7 +29,7 @@ import type { NormalizedRuntimeEvent } from "../runtime/runtime-contracts.js";
 
 export { replyModeFromEnv, type ReplyMode } from "../platform/reply-mode.js";
 
-export interface StreamReplySource { deliveryTarget: string; deliveryAnchor: string }
+export interface StreamReplySource { deliveryTarget: string; deliveryAnchor: string; replyByCommand?: boolean }
 
 type ApiCall = (request: Record<string, unknown>) => Promise<unknown>;
 
@@ -64,7 +68,7 @@ interface ReplyAddress { key: string; chatId: string; anchor: string; inThread: 
 
 /** Map a canonical Inbox source to a card address; only IM chat/thread sources with a real om_ anchor qualify. */
 export function replyAddressOf(source: StreamReplySource | null): ReplyAddress | null {
-  if (!source || !/^om_[A-Za-z0-9_-]+$/.test(source.deliveryAnchor)) return null;
+  if (!source || source.replyByCommand || !/^om_[A-Za-z0-9_-]+$/.test(source.deliveryAnchor)) return null;
   const chat = /^chat:([^:]+)$/.exec(source.deliveryTarget);
   if (chat) return { key: `${source.deliveryTarget}#${source.deliveryAnchor}`, chatId: chat[1], anchor: source.deliveryAnchor, inThread: false };
   const thread = /^thread:([^:]+):([^:]+)$/.exec(source.deliveryTarget);
