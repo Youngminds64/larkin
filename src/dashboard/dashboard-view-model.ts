@@ -20,6 +20,10 @@ import { collectCapabilities as collectTypedCapabilities, defaultCapabilityHomes
 import { buildFingerprint, packageVersion } from "../platform/build-info.js";
 import * as larkinConfig from "../platform/config.js";
 import { toUserRuntime } from "../runtime/user-runtime.js";
+import { ContextPromptBuilder } from "../agent/context-prompt.js";
+import { agentCliPromptCapabilities } from "../agent/agent-cli-capabilities.js";
+import { replyModeFromEnv } from "../platform/reply-mode.js";
+import type { RuntimeId } from "../runtime/runtime-contracts.js";
 
 export interface JsonRecord {
   [key: string]: unknown;
@@ -481,6 +485,23 @@ export function collectCapabilities(agentId: string | null): unknown {
   const agent = Object.values(config.agents || {}).find((candidate) => candidate.agentId === agentId);
   if (!agent) throw Object.assign(new Error("agent 不存在"), { statusCode: 404 });
   return collectTypedCapabilities(config, agent.agentId, toUserRuntime(agent.runtime), defaultCapabilityHomes(process.env, os.homedir()));
+}
+
+/** The standing prompt a new session of this Agent receives, built the same way the Runtime host builds it (minus the per-session previous-archive note). */
+export function standingPromptView(config: { agents?: Record<string, larkinConfig.HydratedAgent> }, agentId: string | null, env: NodeJS.ProcessEnv = process.env) {
+  const agent = Object.values(config.agents || {}).find((candidate) => candidate.agentId === agentId);
+  if (!agent) throw Object.assign(new Error("agent 不存在"), { statusCode: 404 });
+  const identity = readJson(path.join(agent.stateDir, "bot-identity.json"), null) as JsonRecord | null;
+  const replyMode = agent.replyMode ?? replyModeFromEnv(env);
+  const prompt = new ContextPromptBuilder({ replyMode }).build({
+    agentId: agent.agentId, name: (typeof identity?.name === "string" && identity.name) || agent.name,
+    runtime: agent.runtime as RuntimeId, cli: agentCliPromptCapabilities("larkin"),
+  });
+  return { runtime: toUserRuntime(agent.runtime), replyMode, version: prompt.version, content: prompt.content };
+}
+
+export function collectStandingPrompt(agentId: string | null): unknown {
+  return standingPromptView(larkinConfig.loadConfig(process.env).config, agentId);
 }
 
 export function resolveDashboardAvatarSource(agentId: string): string | null {
