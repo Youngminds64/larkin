@@ -339,6 +339,8 @@ function formatReadiness(readiness: RuntimeReadinessView): string {
     `Readiness ${readiness.state}`,
     readiness.reason,
     readiness.nextAction,
+    readiness.version,
+    readiness.executable,
   ].filter(Boolean).join(" · ");
 }
 
@@ -569,10 +571,6 @@ function ActivityPanel({ agent }: { agent: DashboardAgent }) {
       <section className="content-section"><div className="section-heading"><div><h3>提醒</h3><p>在聊天里让它记下的提醒。</p></div><Badge>{agent.activeReminders}</Badge></div><Reminders agent={agent} /></section>
     </div>
   </div>;
-}
-
-function RuntimeSummary({ agent }: { agent: DashboardAgent }) {
-  return <section className="content-section runtime-summary"><h3>运行摘要</h3><dl className="facts"><div><dt>Runtime</dt><dd>{agent.runtime}</dd></div><div><dt>Readiness</dt><dd>{agent.runtimeReadiness ? `${agent.runtimeReadiness.state}${agent.runtimeReadiness.version ? ` · ${agent.runtimeReadiness.version}` : ""}${agent.runtimeReadiness.executable ? ` · ${agent.runtimeReadiness.executable}` : ""}${agent.runtimeReadiness.reason ? ` · ${agent.runtimeReadiness.reason}` : ""}${agent.runtimeReadiness.nextAction ? ` · ${agent.runtimeReadiness.nextAction}` : ""}` : "unknown"}</dd></div><div><dt>Model</dt><dd>{agent.model}</dd></div><div><dt>Effort</dt><dd>{agent.effort || "default"}</dd></div><div><dt>入站</dt><dd>{agent.inbound.state}</dd></div><div><dt>提醒</dt><dd>{agent.activeReminders}</dd></div><div><dt>指示灯</dt><dd>{agent.eyeIndicator.stuck ? "疑似卡住" : `${agent.eyeIndicator.pendingCount} pending`}</dd></div></dl></section>;
 }
 
 function Timeline({ items }: { items: DashboardAgent["feed"] }) {
@@ -898,7 +896,7 @@ function AgentHeader({ agent }: { agent: DashboardAgent }) {
   const context = usage.contextPercent != null
     ? `上下文 ${Math.round(Number(usage.contextPercent))}% · ${formatNumber(usage.latestTokens)} / ${formatNumber(usage.contextWindow)}`
     : `上下文 ${agent.session?.turns || 0} turns`;
-  return <header className="agent-header"><div className="agent-title"><AgentAvatar agent={agent} /><div><p>{agent.agentId}</p><h1>{agent.displayName || agent.name}</h1></div></div><div className="agent-header-summary"><Badge className={agent.connection.state === "connected" ? "success" : agent.issue ? "danger-badge" : ""}>{agent.connection.state}</Badge><span>{agent.runtime}</span><span>{agent.model}</span><span>{agent.effort || "default effort"}</span><span>{context}</span><span>累计 {formatNumber(usage.cumulativeTokens)} tokens</span><span>最近一轮 {formatNumber(usage.latestTokens)} tokens</span><span>Compact {formatNumber(compaction.count)} 次 · {compaction.active ? "active" : "idle"}</span><span>最近消息 {agent.lastDeliver ? formatAge(agent.lastDeliver.ageSec) : "暂无"}</span><span>{agent.lastActivity?.detail || activityLabel(agent)}</span></div></header>;
+  return <header className="agent-header"><div className="agent-title"><AgentAvatar agent={agent} /><div><p>{agent.agentId}</p><h1>{agent.displayName || agent.name}</h1></div></div><div className="agent-header-summary"><Badge className={agent.connection.state === "connected" ? "success" : agent.issue ? "danger-badge" : ""}>{agent.connection.state}</Badge>{agent.eyeIndicator.stuck ? <Badge className="danger-badge">疑似卡住：有消息超过 3 分钟没处理</Badge> : null}<span>{agent.runtime}</span><span>{agent.model}</span><span>{agent.effort || "default effort"}</span><span>{context}</span><span>累计 {formatNumber(usage.cumulativeTokens)} tokens</span><span>最近一轮 {formatNumber(usage.latestTokens)} tokens</span><span>Compact {formatNumber(compaction.count)} 次 · {compaction.active ? "active" : "idle"}</span><span>最近消息 {agent.lastDeliver ? formatAge(agent.lastDeliver.ageSec) : "暂无"}</span><span>{agent.lastActivity?.detail || activityLabel(agent)}</span></div></header>;
 }
 
 export function App() {
@@ -1007,7 +1005,6 @@ export function App() {
           <section role="tabpanel" hidden={tab !== "reply"}><AgentConfiguration section="reply" agentId={selected.agentId} readiness={null} onDirtyChange={setReplyDirty} onSaved={refreshConfig} refreshKey={configRefreshKey} /></section>
           <section role="tabpanel" hidden={tab !== "advanced"}><div className="runtime-page">
             <AgentConfiguration section="advanced" agentId={selected.agentId} readiness={null} onDirtyChange={setAdvancedDirty} onSaved={refreshConfig} refreshKey={configRefreshKey} />
-            <RuntimeSummary agent={selected} />
             <details className="runtime-details"><summary><ChevronRight size={16} aria-hidden="true" />工作区文件 <small>查看和编辑这个 Agent 工作区里的文本文件</small></summary><Workspace agentId={selected.agentId} onDirtyChange={setWorkspaceDirty} /></details>
             <details className="runtime-details"><summary><ChevronRight size={16} aria-hidden="true" />运行日志 <small>{selected.recentErrors.length ? `最近 ${selected.recentErrors.length} 个错误` : "排查问题时用"}</small></summary><LogsPanel agent={selected} /></details>
           </div></section>

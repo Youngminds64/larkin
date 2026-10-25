@@ -666,6 +666,17 @@ describe("Agent-centric dashboard workbench", () => {
     await screen.findByText("未选择文件");
     expect(document.querySelector(".workspace-browser")).toBeVisible();
     expect(screen.getByText("运行日志").closest("details")).not.toHaveAttribute("open");
+    expect(screen.queryByText("运行摘要")).toBeNull();
+  });
+
+  it("flags a stuck Agent in its header instead of a buried summary", async () => {
+    const prior = agents[1].eyeIndicator;
+    agents[1].eyeIndicator = { pendingCount: 2, oldestAgeSec: 600 as unknown as null, stuck: true };
+    try {
+      render(<App />);
+      await screen.findByRole("heading", { level: 1, name: "Builder" });
+      expect(screen.getByText("疑似卡住：有消息超过 3 分钟没处理")).toBeVisible();
+    } finally { agents[1].eyeIndicator = prior; }
   });
 
   it("edits a workspace text file with an explicit save and surfaces a concurrent-edit conflict", async () => {
@@ -868,7 +879,7 @@ describe("Agent-centric dashboard workbench", () => {
     expect([...runtimeSelect.querySelectorAll("option")].map((option) => option.getAttribute("value"))).toEqual(["codex", "claude", "pi"]);
   });
 
-  it("renders readiness next to the model settings and in the 高级 summary, and shows a rejected runtime-switch error", async () => {
+  it("renders readiness, with version and executable, next to the model settings and shows a rejected runtime-switch error", async () => {
     const missing = {
       runtime: "claude" as const,
       state: "missing" as const,
@@ -881,6 +892,8 @@ describe("Agent-centric dashboard workbench", () => {
       state: "unauthenticated",
       reason: "codex is installed but not logged in",
       nextAction: "Run `codex login`, then retry.",
+      version: "0.130.0",
+      executable: "codex",
     };
     try {
       vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -902,8 +915,7 @@ describe("Agent-centric dashboard workbench", () => {
       render(<App />);
       await screen.findByRole("heading", { level: 1, name: "Builder" });
       expect(await screen.findByText(/^Readiness unauthenticated · codex is installed but not logged in · Run `codex login`/)).toBeVisible();
-      await userEvent.click(screen.getByRole("tab", { name: "高级" }));
-      expect(screen.getByText(/^unauthenticated · codex is installed but not logged in · Run `codex login`/)).toBeVisible();
+      expect(screen.getByText(/Run `codex login`, then retry\. · 0\.130\.0 · codex$/)).toBeVisible();
       await userEvent.click(screen.getByRole("tab", { name: "设定" }));
       await userEvent.selectOptions(await screen.findByLabelText("Runtime"), "claude");
       await userEvent.click(screen.getByRole("button", { name: "保存并应用" }));
