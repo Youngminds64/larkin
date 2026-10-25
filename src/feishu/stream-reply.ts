@@ -18,8 +18,9 @@
 // tool call, so the source is re-resolved after tool activity and at a bounded
 // interval; output produced before any poll has no anchor and is not delivered.
 //
-// A group message that woke the Agent without an @ opens no card: the Agent
-// replies by command, so deciding to stay silent leaves nothing in the group.
+// A group message that woke the Agent without an @, or never woke it (an Inbox
+// audit reads it later), opens no card: the Agent replies by command, so
+// deciding to stay silent leaves nothing in the group.
 //
 // The mode is the global `replyMode` in Larkin config (dashboard 全局设置), else LARKIN_REPLY_MODE;
 // `cli` restores the legacy model-driven `+messages-reply`.
