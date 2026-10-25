@@ -18,8 +18,12 @@ import type { ReplyMode } from "../platform/reply-mode.js";
  */
 
 export const LARKIN_STANDING_PROMPT_VERSION = "larkin-standing-v34";
-/** Card reply mode replaces the delivery rules; versioned separately so legacy CLI evals stay pinned. */
-export const LARKIN_CARD_STANDING_PROMPT_VERSION = "larkin-standing-v36-card";
+/**
+ * Card reply mode replaces the delivery rules; versioned separately so legacy CLI evals stay pinned.
+ * Card mode keeps only Feishu safety boundaries (wrapper-only identity, real om_ ids, same thread,
+ * freshness, duplicates, recall); command recipes are left to the official lark-cli skills.
+ */
+export const LARKIN_CARD_STANDING_PROMPT_VERSION = "larkin-standing-v37-card";
 
 /**
  * Pi 长命令引导的唯一来源。仅在当前工具列表出现 tmux-backed bash 时适用；
@@ -60,7 +64,7 @@ export const CARD_REPLY_DELIVERY_GUIDANCE: readonly string[] = [
   "When the rules above require silence (an explicitly silent envelope, or a message addressed only to another Agent), write no assistant text at all after the poll.",
   "If the current user explicitly requests one exact response only, after the required poll write exactly that response as your only assistant text, with nothing added before or after it.",
   "For long work, you may write one short status line before a slow phase; do not repeat status lines or report every tool call. Finish with the conclusion, or with the explicit request when user action is needed.",
-  "Use `im +messages-send` only for a chat other than the polled source, for reminder deliveries, or to construct a real @mention of another Agent. To deliver a file or image for the polled source, use `im +messages-reply --message-id <polled_om_id>` with only the attachment flag (and `--reply-in-thread` for a thread source).",
+  "Use `im +messages-send` only for a chat other than the polled source, for reminder deliveries, or to construct a real @mention of another Agent. A file or image for the polled source goes as an attachment replying to the polled message, inside the same topic when the source is a thread.",
   "Before an irreversible action such as recall, deletion, or chat/document administration, state the intended action and target in your reply text. If asked to delete or recall someone else's content, first confirm it is this Agent's own output or that the relevant person approved it.",
 ];
 
@@ -213,12 +217,17 @@ export class ContextPromptBuilder {
       "",
       `Use only the Larkin-owned \`${executable}\` command for Feishu. Bot identity, private configuration, and freshness are Runtime-bound; the wrapper delegates to the unmodified global official CLI. Use \`${executable} <command> --help\`, never invoke bare \`lark-cli\`, and never pass \`--agent\`, \`--as user\`, \`--profile\`, or \`--config-dir\`. If a command reports a missing scope, relay that error unchanged and ask the user to authorize it; do not bypass the scope boundary.`,
       "If a platform URL must be shown, use the current Agent tenant host; never emit feishu.cn for a Lark tenant.",
+      ...(cardMode ? [
+        "Read history only for the exact Inbox target: a thread target reads that thread, never the whole chat. If a history read fails, fail visibly; do not answer from remembered or hard-coded text.",
+        "Only a real Feishu `message_id` beginning with `om_` may be replied to; `rem_`, `redeliver_`, and every other synthetic ID must never be. Send only to a confirmed `chat_id`, never one guessed from a display name.",
+        "Freshness never blocks a write. A `larkin_notice` with `freshness` on stderr means the write already happened: re-read the target, and follow up only when newer context changes the answer.",
+        "The wrapper derives the idempotency key. A write result with `duplicate: true` or `committed=true` was already delivered: never resend it.",
+      ] : [
       `Use the exact Inbox target for history reads. For \`thread:<chat_id>:<thread_id>\`, run \`${executable} im +threads-messages-list --thread <thread_id> --order desc --page-size 10 --no-reactions --json\`. For \`chat:<chat_id>\`, run \`${executable} im +chat-messages-list --chat-id <chat_id> --order desc --page-size 10 --no-reactions --json\`.`,
       "Successful history response messages are always at `data.messages`. Never use a chat-wide fallback for a thread target, never merge stderr with `2>&1` before parsing JSON, and never truncate structured output before parsing it.",
       "If the scoped history read fails or its schema is invalid, fail visibly. Do not reuse remembered or hard-coded text to make the task appear successful.",
       "Only a real Feishu `message_id` beginning with `om_` may be passed to `+messages-reply`; `rem_`, `redeliver_`, and every other synthetic ID must never be replied to. Send with a confirmed `chat_id` and never guess a chat id from a display name.",
       "Freshness is a non-blocking reminder: a send, reply, card, recall, or urgent write is never rejected for freshness. After a successful write, stderr may contain a `larkin_notice` with `freshness`; the write already happened. Re-read the exact chat or thread with the Larkin command, and send a short follow-up only when newer context changes the answer. Never resend the same content merely because of this notice.",
-      ...(cardMode ? [] : [
         "For ordinary plain-text message bodies, use `--text`, including brief one-line replies, multiline status lines, and paragraphs. Use `--markdown` only when you intentionally need Markdown rendering, such as headings, lists, emphasis, blockquotes, fenced code, or Markdown links.",
         "When a URL must be visible, clickable, or openable by the recipient, include the complete bare `https://...` URL as visible text. Do not rely solely on `[label](URL)`, because Feishu client rendering is unreliable. A label may also be included, but the bare URL must remain present.",
         "Use native `--text` for ordinary plain text and for verbatim preservation, such as logs, literal code, or exact whitespace. Both `--markdown` and `--text` remain supported in the Larkin Runtime.",
@@ -241,14 +250,16 @@ export class ContextPromptBuilder {
         "Keep the shell substitution double-quoted after `--content` so the JSON document is passed as one argument. This is the only allowed command substitution for exact text; you must not use an unquoted substitution, `eval`, `echo`, `2>&1`, a temporary file or variable, or any extra discovery read.",
         "If the scoped read or projection fails or does not yield exactly one complete text document, let the guarded command fail visibly. Do not fall back to copied text, `--text`, remembered content, or a second read.",
         `The complete canonical exact send and reply paths above must not be preceded by \`${executable} im +messages-send --help\` or \`${executable} im +messages-reply --help\`; run these two known recipes directly.`,
-      ]),
       "For the known canonical Inbox poll, scoped chat/thread history, and exact send/reply recipes specified here, execute them directly; you must not read or re-read a skill file or reference merely to rediscover or confirm their command syntax.",
       `For a task that starts from an exact group name and asks for user and bot counts, after the required Inbox poll use this known canonical two-read recipe directly: first run \`${executable} im +chat-search --query '<exact_group_name>' --json\`, require one result with an exact name match and confirm its \`oc_\` chat id, then run \`${executable} im chats get --chat-id <confirmed_oc_chat_id> --json\` and answer from its \`user_count\` and \`bot_count\`. This group user/bot counts recipe uses exactly two post-poll business read calls; you must not read or re-read a skill or reference, open help or schema, invoke bare \`lark-cli\`, call \`chat.members\` or \`+chat-members-list\`, fall back to \`+chat-list\`, or add shell filters or output truncation. If the exact name is not a unique visible match, the chat id is not confirmed, or either count is missing, fail visibly without another discovery path or a guess.`,
       "This narrow direct-recipe rule does not waive required skill safety gates, authorization, identity, or other safety checks. Unknown commands or high-risk operations still require the applicable skill/reference guidance or help.",
+      ]),
       `To recall a message after the required explicit user approval, use \`${executable} im messages delete --message-id <bot-owned_om_id> --yes --json\`. Runtime verifies the original sender is this exact Bot, derives the exact chat/thread target, and refuses cross-Agent or third-party messages. A \`committed=true\` or \`duplicate=true\` result must not be retried; an ambiguous result fails closed and requires user inspection. Never use generic API or bare \`lark-cli\` to bypass recall protection.`,
+      ...(cardMode ? [] : [
       "The Larkin wrapper derives the stable per-intent idempotency key; do not pass `--idempotency-key` in an ordinary send or reply recipe. A successful write result carrying `duplicate: true` means the provider returned the earlier delivery for the same derived key: the message was already delivered and no new message was created. Do not resend the same command after a `duplicate: true` result; treat the message as delivered. To deliberately send identical content again as a fresh intent (e.g., a new reminder), pass an explicit new `--idempotency-key`, which the wrapper respects instead of deriving its own.",
       "A `larkin_notice` freshness reminder is written to stderr only after the provider write has completed. Keep the successful write; re-read the target before any follow-up, and only send a revised follow-up if the new context materially changes the answer. A result with `committed=true` or `duplicate=true` must not be repeated; ambiguous termination follows the existing wrapper same-key recovery contract.",
       "For multiline `--markdown` or `--text` content in zsh or bash, prefer shell ANSI-C quoting so the command passes one argument with real newline characters: `--markdown $'First line\\nSecond line'` or `--text $'First line\\nSecond line'`. Putting `\"First line\\nSecond line\"` in ordinary double quotes is wrong: ordinary quotes do not decode `\\n`, so lark-cli and Feishu receive a backslash followed by the letter `n`. A literal multiline argument containing real newline characters is also valid. If ANSI-C-quoted content contains an apostrophe, use a safe shell single-quote splice or the literal-newline form; never use `eval`, `echo`, a temporary file, or unsafe variable interpolation to construct the body.",
+      ]),
       ...FEISHU_IM_COMMAND_GROUPS.map(([label, suffixes]) => `- ${label}: ${suffixes.map((suffix) => `\`${executable} ${suffix}\``).join(", ")}.`),
       `- Attachments: for an attachment-only send/reply, use its native attachment flag without a text body flag; download with \`${executable} im +messages-resources-download\`.`,
       "",
