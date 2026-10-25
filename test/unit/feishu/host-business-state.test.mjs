@@ -155,24 +155,27 @@ test("inbound, reminder, and restart envelopes retain exact persistence and sequ
   assert.equal(countWakeEnvelopes([JSON.stringify({ wake: true }), "bad", JSON.stringify({ wake: false }), JSON.stringify({ wake: true })]), 2);
 });
 
-test("a group message that wakes the Agent without an @ is marked to reply by command", () => {
+test("a person's group message without an @ is marked to reply by command, with its content untouched", () => {
   const projector = new HostEnvelopeProjector(new HostStateProjection(() => memoryStore()), () => {});
   const base = { chat_id: "oc_chat", chat_type: "group", sender_id: "ou_user", content: "hello",
     thread_id: null, _mentioned_bot: false, _mention_all: false, _sender_is_bot: false };
-  const free = projector.projectInbound(agent, { ...base, message_id: "om_free" }, { anchorReply: true });
-  assert.equal(free.reply_by, "command");
-  assert.match(free.content, /^hello\n\[回复方式: command reply。这条消息没有 @ 你，不开卡片，你写的文字不会送达。要回复就运行 larkin im \+messages-reply --message-id om_free --text '<回复>' --json；/);
-  const topic = projector.projectInbound(agent, { ...base, message_id: "om_topic", thread_id: "omt_t" }, { anchorReply: true });
-  assert.match(topic.content, /--message-id om_topic --reply-in-thread --text/);
   for (const [label, event, options] of [
-    ["an @", { ...base, message_id: "om_at", _mentioned_bot: true }, { anchorReply: true }],
-    ["an @all", { ...base, message_id: "om_all", _mention_all: true }, { anchorReply: true }],
-    ["a direct message", { ...base, message_id: "om_dm", chat_type: "p2p" }, { anchorReply: true }],
+    ["a message that woke the Agent", { ...base, message_id: "om_free" }, { anchorReply: true }],
+    ["a message inside a topic", { ...base, message_id: "om_topic", thread_id: "omt_t" }, { anchorReply: true }],
     ["a message that did not wake the Agent", { ...base, message_id: "om_quiet" }, { anchorReply: false }],
   ]) {
     const envelope = projector.projectInbound(agent, event, options);
+    assert.equal(envelope.reply_by, "command", `${label} replies by command`);
+    assert.equal(envelope.content, "hello", `${label} carries no per-message reply note`);
+  }
+  for (const [label, event] of [
+    ["an @", { ...base, message_id: "om_at", _mentioned_bot: true }],
+    ["an @all", { ...base, message_id: "om_all", _mention_all: true }],
+    ["a direct message", { ...base, message_id: "om_dm", chat_type: "p2p" }],
+    ["another bot's message", { ...base, message_id: "om_bot", _sender_is_bot: true }],
+  ]) {
+    const envelope = projector.projectInbound(agent, event, { anchorReply: true });
     assert.equal(envelope.reply_by, undefined, `${label} keeps the reply card`);
-    assert.doesNotMatch(envelope.content, /回复方式/, `${label} carries no reply note`);
   }
 });
 

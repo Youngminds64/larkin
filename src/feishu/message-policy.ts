@@ -84,7 +84,7 @@ export interface MessageEnvelope {
   thread_id: string | null;
   parent_channel_type?: "dm" | "channel";
   parent_channel_name?: string;
-  /** A group message that woke the Agent without @-ing it: no reply card; the Agent replies by command. */
+  /** A person's group message that does not @ the Agent: no reply card; the Agent replies by command. */
   reply_by?: "command";
 }
 

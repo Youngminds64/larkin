@@ -52,9 +52,9 @@ test("global reply mode is stored once, projected onto every Agent and requires 
 test("a per-session reply mode overrides the prompt builder default", () => {
   const builder = new ContextPromptBuilder({ replyMode: "card" });
   const input = { agentId: APP, runtime: "codex" };
-  assert.equal(builder.build(input).version, "larkin-standing-v39-card");
+  assert.equal(builder.build(input).version, "larkin-standing-v40-card");
   assert.equal(builder.build({ ...input, replyMode: "cli" }).version, "larkin-standing-v34");
-  assert.equal(new ContextPromptBuilder().build({ ...input, replyMode: "card" }).version, "larkin-standing-v39-card");
+  assert.equal(new ContextPromptBuilder().build({ ...input, replyMode: "card" }).version, "larkin-standing-v40-card");
 });
 
 test("card prompt drops Feishu reply recipes but keeps the safety boundaries", () => {
@@ -69,4 +69,13 @@ test("card prompt drops Feishu reply recipes but keeps the safety boundaries", (
     "`duplicate: true`", "Freshness never blocks a write", "inside the same topic when the source is a thread", "im messages delete --message-id"]) {
     assert.ok(card.includes(boundary), `card prompt lost boundary: ${boundary}`);
   }
+});
+
+test("card prompt states once how to answer a group message that does not @ the Agent", () => {
+  const card = new ContextPromptBuilder({ replyMode: "card" }).build({ agentId: APP, runtime: "codex" }).content;
+  const rule = card.split("\n").find((line) => line.startsWith("Command replies:")) ?? "";
+  for (const fact of ['`reply_by: "command"`', "reaches no one", "new topic on that message", "main chat", "end the turn silently"]) {
+    assert.ok(rule.includes(fact), `command-reply rule lost: ${fact}`);
+  }
+  assert.ok(!card.includes("回复方式"), "card prompt still points at the removed per-message note");
 });
