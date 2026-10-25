@@ -2,7 +2,7 @@ import type http from "node:http";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { configApplyState, loadConfig, loadRuntimeModels, markConfigApplied, mutateConfig, resolveMentionPolicy, runtimeConfigSignature, safeConfigView, type ConfigMutation } from "../platform/config.js";
+import { configApplyState, loadConfig, loadRuntimeModels, markConfigApplied, mutateConfig, resolveMentionPolicy, runtimeConfigSignature, safeConfigView, type AgentSandbox, type ConfigMutation } from "../platform/config.js";
 import { requestAgentUpsert } from "../app/local-control.js";
 import { discoverClaudeModelCatalog, type DiscoverClaudeCatalogOptions } from "../runtime/claude-model-catalog.js";
 import { discoverCodexModelCatalog, type DiscoverCodexCatalogOptions } from "../runtime/codex-model-catalog.js";
@@ -71,6 +71,26 @@ function cleanChatName(value: unknown): string | null {
     .trim()
     .slice(0, 120);
   return cleaned || null;
+}
+
+function readSavedChatNames(file: string): Record<string, string> {
+  try {
+    if (fs.statSync(file).size > 256 * 1024) return {};
+    const value = JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value).flatMap(([chatId, name]) => {
+      const cleaned = cleanChatName(name);
+      return cleaned ? [[chatId, cleaned]] : [];
+    }));
+  } catch { return {}; }
+}
+
+function saveChatNames(file: string, names: Record<string, string>): void {
+  try {
+    const temp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(temp, `${JSON.stringify(names)}\n`, { mode: 0o600 });
+    fs.renameSync(temp, file);
+  } catch { /* names are a convenience; the next refresh retries */ }
 }
 
 function chatList(value: unknown): Array<{ chatId: string; name: string }> {
@@ -272,9 +292,10 @@ export function createCodexModelDirectoryResolver(options: {
         pending = (async () => {
           const catalog = await discover({ cwd: input.cwd, env: input.env });
           const models = [
-            { id: "default", label: `default: ${catalog.effectiveModel}` },
-            ...catalog.models.map(({ id, label, supportedReasoningEfforts, defaultReasoningEffort }) => ({
-              id, label, supportedReasoningEfforts, ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
+            { id: "default", label: `default: ${catalog.effectiveModel}`,
+              supportsFast: catalog.models.find((model) => model.id === catalog.effectiveModel)?.supportsFast ?? false },
+            ...catalog.models.map(({ id, label, supportedReasoningEfforts, defaultReasoningEffort, supportsFast }) => ({
+              id, label, supportedReasoningEfforts, ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}), supportsFast,
             })),
           ];
           cache.set(key, { expiresAt: now() + ttlMs, value: models });
@@ -323,9 +344,11 @@ export function createClaudeModelDirectoryResolver(options: {
   };
 }
 
-async function sanitizedView(env: Env, chatDirectoryResolver: ChatDirectoryResolver, onlyAgentId?: string, chatId?: string): Promise<Record<string, unknown>> {
+async function sanitizedView(env: Env, chatDirectoryResolver: ChatDirectoryResolver, onlyAgentId?: string, chatId?: string, withChats = true): Promise<Record<string, unknown>> {
   const { config } = loadConfig(env);
   const view = safeConfigView(config, onlyAgentId, chatId, configApplyState(env, config)) as { agents: Array<Record<string, unknown>>; [key: string]: unknown };
+  // Group names come from Feishu, one lookup per Agent; callers that only need the global values skip them.
+  if (!withChats) return view;
   for (const item of view.agents) {
     const agentId = String(item.agentId);
     const agent = config.agents[agentId];
@@ -339,15 +362,30 @@ async function sanitizedView(env: Env, chatDirectoryResolver: ChatDirectoryResol
     } catch { /* no known chat map yet */ }
     const configuredChatIds = Object.keys(agent?.chatMentionPolicies || {});
     const aliases = knownChatAliases(map, configuredChatIds);
-    let directory: Record<string, string> = {};
-    try {
-      directory = await chatDirectoryResolver.resolve({
+    // Names resolved before are saved per Agent and answer at once; Feishu refreshes them in the background
+    // and is awaited only for a group that has never been resolved.
+    const namesFile = path.join(agent.stateDir, "chat-names.json");
+    const saved = readSavedChatNames(namesFile);
+    let directory: Record<string, string> = saved;
+    if (configuredChatIds.length) {
+      const refresh = chatDirectoryResolver.resolve({
         agentId,
         chatIds: configuredChatIds,
         configDir: agent.larkConfigDir,
         profile: agent.feishuProfile,
+      }).then((names) => {
+        const merged = Object.fromEntries(configuredChatIds.flatMap((id) => {
+          const name = names[id] ?? saved[id];
+          return name ? [[id, name]] : [];
+        }));
+        saveChatNames(namesFile, merged);
+        return merged;
       });
-    } catch { /* explicit configuration remains visible without a resolved name */ }
+      if (configuredChatIds.every((id) => saved[id])) void refresh.catch(() => undefined);
+      else {
+        try { directory = await refresh; } catch { /* explicit configuration remains visible without a resolved name */ }
+      }
+    }
     item.knownChats = configuredChatIds.sort((left, right) => left.localeCompare(right, "en")).map((configuredChatId) => ({
       ...(aliases[configuredChatId] ?? { chatId: configuredChatId, displayName: null, kind: "group" as const }),
       displayName: directory[configuredChatId] ?? aliases[configuredChatId]?.displayName ?? null,
@@ -374,6 +412,33 @@ export function assertWriteRequest(req: http.IncomingMessage, csrfCapability: st
   if (origin ? origin !== expectedOrigin : !referer.startsWith(`${expectedOrigin}/`)) throw new Error("same-origin required");
   if (req.headers["x-larkin-csrf"] !== csrfCapability) throw new Error("csrf rejected");
   if (!String(req.headers["content-type"] || "").toLowerCase().startsWith("application/json")) throw new Error("application/json required");
+}
+
+/**
+ * Map a failed dashboard request to a status, a stable `code` the page can act on, and a message it shows as is.
+ * The raw reason goes to the local log. A wrong capability means the page was opened before this dashboard
+ * (re)started; an unknown operation or field means the page is from another build; both are fixed by a reload.
+ */
+export function dashboardError(error: unknown, fallback: string): { status: number; body: { error: string; code: string } } {
+  const message = error instanceof Error ? error.message : String(error);
+  console.warn(`[dashboard] ${fallback}: ${message}`);
+  const reply = (status: number, code: string, text: string) => ({ status, body: { error: text, code } });
+  if (/^(?:csrf|capability) rejected$/.test(message)) return reply(403, "stale_page", "这个页面已过期，刷新页面后再操作。");
+  if (/^(?:invalid host|same-origin required)$/.test(message)) return reply(403, "forbidden", "请在本机用 http://localhost 打开 dashboard。");
+  if (message === "request too large") return reply(413, "too_large", "内容太大，无法保存。");
+  if (message === "unknown agent") return reply(404, "unknown_agent", "这个 Agent 已不存在，刷新页面看看。");
+  if (/not in current (?:runtime|model) directory$/.test(message)) return reply(400, "stale_choice", "所选的模型或推理强度已不在可用列表里，重新选择后再保存。");
+  if (/^(?:unsupported operation|invalid |JSON object required|application\/json required)/.test(message) || error instanceof SyntaxError) {
+    return reply(400, "outdated_page", "页面和正在运行的 larkin 版本不一致。刷新页面后再操作。");
+  }
+  // Messages written for people (Chinese) are shown as is; anything else keeps the fallback plus its reason.
+  if (/[\u4e00-\u9fff]/.test(message)) return reply(400, "rejected", message);
+  return reply(500, "failed", `${fallback}：${message.slice(0, 200)}`);
+}
+
+function sendError(res: http.ServerResponse, error: unknown, fallback: string, extra: Record<string, unknown> = {}): void {
+  const { status, body } = dashboardError(error, fallback);
+  json(res, status, { ...body, ...extra });
 }
 
 function assertPrivateReadRequest(req: http.IncomingMessage, csrfCapability: string): void {
@@ -407,7 +472,8 @@ function dashboardMutation(value: Record<string, unknown>): ConfigMutation {
     "set-chat-mention": ["operation", "agentId", "chatId", "value"], "set-agent-runtime": ["operation", "agentId", "runtime", "model"],
     "set-agent-model": ["operation", "agentId", "model"], "set-agent-effort": ["operation", "agentId", "effort"],
     "set-global-inbox-audit": ["operation", "enabled", "intervalMs"], "set-agent-inbox-audit": ["operation", "agentId", "enabled", "intervalMs"],
-    "set-global-reply-mode": ["operation", "value"],
+    "set-global-reply-mode": ["operation", "value"], "set-agent-sandbox": ["operation", "agentId", "value"],
+    "set-agent-fast-mode": ["operation", "agentId", "value"],
   };
   if (!allowed[operation] || Object.keys(value).some((key) => !allowed[operation].includes(key))) throw new Error("unsupported operation");
   if (operation === "set-global-mention") return { kind: operation, value: String(value.value) as "require" | "free" };
@@ -426,6 +492,11 @@ function dashboardMutation(value: Record<string, unknown>): ConfigMutation {
   if (operation === "set-agent-mention") return { kind: operation, agentId, value: String(value.value) as "inherit" | "require" | "free" };
   if (operation === "set-chat-mention") return { kind: operation, agentId, chatId: String(value.chatId || ""), value: String(value.value) as "inherit" | "require" | "free" };
   if (operation === "set-agent-runtime") return { kind: operation, agentId, runtime: String(value.runtime || ""), ...(value.model ? { model: String(value.model) } : {}) };
+  if (operation === "set-agent-fast-mode") {
+    if (typeof value.value !== "boolean") throw new Error("invalid fast mode");
+    return { kind: operation, agentId, value: value.value };
+  }
+  if (operation === "set-agent-sandbox") return { kind: operation, agentId, value: String(value.value) as AgentSandbox };
   if (operation === "set-agent-model") return { kind: operation, agentId, model: String(value.model || "") };
   return { kind: "set-agent-effort", agentId, effort: value.effort === null || value.effort === "default" ? null : String(value.effort || "") };
 }
@@ -509,12 +580,12 @@ export function createDashboardConfigController({
         try {
           assertPrivateReadRequest(req, csrfCapability);
           json(res, 200, {
-            ...await sanitizedView(env, chatDirectoryResolver, requestUrl.searchParams.get("agent") || undefined, requestUrl.searchParams.get("chat") || undefined),
+            ...await sanitizedView(env, chatDirectoryResolver, requestUrl.searchParams.get("agent") || undefined, requestUrl.searchParams.get("chat") || undefined, requestUrl.searchParams.get("chats") !== "0"),
             runtimeModels: loadRuntimeModels(),
             runtimeOptions: [...RUNTIME_OPTIONS],
           });
         } catch (error) {
-          json(res, error instanceof Error && /host|capability/.test(error.message) ? 403 : 500, { error: "configuration unavailable" });
+          sendError(res, error, "读取配置失败");
         }
         return true;
       }
@@ -525,7 +596,7 @@ export function createDashboardConfigController({
           const models = await resolvePiModelDirectory(agentId);
           json(res, 200, { models });
         } catch (error) {
-          json(res, error instanceof Error && /host|capability/.test(error.message) ? 403 : 500, { error: "Pi model directory unavailable" });
+          sendError(res, error, "读取 Pi 模型列表失败");
         }
         return true;
       }
@@ -539,7 +610,7 @@ export function createDashboardConfigController({
           const models = await codexModelDirectoryResolver.resolve({ agentId, cwd: agent.workspaceDir, env });
           json(res, 200, { models });
         } catch (error) {
-          json(res, error instanceof Error && /host|capability/.test(error.message) ? 403 : 500, { error: "Codex model directory unavailable" });
+          sendError(res, error, "读取 Codex 模型列表失败");
         }
         return true;
       }
@@ -553,7 +624,7 @@ export function createDashboardConfigController({
           const models = await claudeModelDirectoryResolver.resolve({ agentId, cwd: agent.workspaceDir, env });
           json(res, 200, { models });
         } catch (error) {
-          json(res, error instanceof Error && /host|capability/.test(error.message) ? 403 : 500, { error: "Claude model directory unavailable" });
+          sendError(res, error, "读取 Claude 模型列表失败");
         }
         return true;
       }
@@ -566,13 +637,8 @@ export function createDashboardConfigController({
           const result = mutateConfig(env, mutation, { kind: "user" });
           json(res, 200, { ok: true, revision: result.revision, persisted: true, applyState: result.applyState, changedScope: result.changedScope });
         } catch (error) {
-          if (error instanceof RuntimePrerequisiteError) {
-            json(res, 400, { error: error.message, readiness: error.readiness });
-          } else if (error instanceof Error && error.message.startsWith("未知 runtime")) {
-            json(res, 400, { error: error.message });
-          } else {
-            json(res, 400, { error: "configuration update rejected" });
-          }
+          if (error instanceof RuntimePrerequisiteError) json(res, 400, { error: error.message, code: "runtime_unready", readiness: error.readiness });
+          else sendError(res, error, "保存失败");
         }
         return true;
       }
@@ -587,13 +653,13 @@ export function createDashboardConfigController({
           const expectedSignature = runtimeConfigSignature(config, agentId);
           const result = await requestUpsert({ larkinHome: config.larkinHome, agentId });
           if (!result.ok) {
-            json(res, 409, { error: result.error || "configuration saved but apply failed",
+            json(res, 409, { error: result.error || "配置已保存，但应用失败", code: "apply_failed",
               ...(result.readiness ? { readiness: result.readiness } : {}) });
             return true;
           }
           markConfigApplied(env, agentId, expectedSignature);
           json(res, 200, { ok: true, agentId, applyState: "applied" });
-        } catch { json(res, 409, { error: "configuration saved but apply failed" }); }
+        } catch (error) { sendError(res, error, "配置已保存，但应用失败"); }
         return true;
       }
       return false;

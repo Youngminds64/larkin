@@ -14,7 +14,8 @@ function write(file, content) {
 }
 
 function setup() {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-dashboard-capabilities-"));
+  // The workspace is resolved with realpath, as Claude records its cwd; on macOS the tmpdir sits behind /var -> /private/var.
+  const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "larkin-dashboard-capabilities-")));
   const home = path.join(temp, "home");
   const larkinHome = path.join(temp, "larkin");
   const agentId = "cli_capabilities1";

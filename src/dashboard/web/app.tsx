@@ -4,7 +4,7 @@ import {
   Gauge, Menu, MessageSquareText, RefreshCw, ScrollText, Search, Settings2, SlidersHorizontal, Users, XCircle,
 } from "lucide-react";
 import { AGENT_TABS, createLatestResponseGate, filterAgents, parseRoute, reconcileAgentId, routeSearch, sameDraft, type AgentTab } from "./dashboard-state";
-import type { CapabilitiesResponse, CapabilityKind, ConfigAgent, ConfigResponse, DashboardAgent, InstructionFilesResponse, RuntimeModel, RuntimeReadinessView, StatusResponse, WorkspaceProjection } from "./types";
+import type { CapabilitiesResponse, CapabilityKind, ConfigAgent, ConfigResponse, DashboardAgent, InstructionFilesResponse, RuntimeModel, RuntimeReadinessView, StandingPromptResponse, StatusResponse, WorkspaceProjection } from "./types";
 import { Badge, Button, EmptyState, Sheet, cn } from "./components/ui";
 import { RUNTIME_OPTIONS } from "../../runtime/user-runtime.js";
 
@@ -16,15 +16,22 @@ const bootstrap = window.__LARKIN_DASHBOARD__ || {
   packageVersion: "dev", dashboardVersion: "dev", buildFingerprint: "", csrfCapability: "",
 };
 
+const UNREACHABLE = "连不上 larkin：服务可能已停止或正在重启。确认 larkin 在运行后刷新页面。";
+
 class JsonResponseError extends Error {
-  constructor(message: string, readonly body: { error?: string; readiness?: RuntimeReadinessView }) { super(message); }
+  constructor(message: string, readonly body: { error?: string; code?: string; readiness?: RuntimeReadinessView }) { super(message); }
 }
 
 async function jsonFetch<T>(url: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, { cache: "no-store", ...init });
+  let response: Response;
+  try { response = await fetch(url, { cache: "no-store", ...init }); }
+  catch (error) {
+    if (init.signal?.aborted) throw error;
+    throw new Error(UNREACHABLE);
+  }
   if (!response.ok) {
-    const body = await response.json().catch(() => ({})) as { error?: string; readiness?: RuntimeReadinessView };
-    throw new JsonResponseError(body.error || `HTTP ${response.status}`, body);
+    const body = await response.json().catch(() => ({})) as { error?: string; code?: string; readiness?: RuntimeReadinessView };
+    throw new JsonResponseError(body.error || `请求失败（HTTP ${response.status}）`, body);
   }
   return response.json() as Promise<T>;
 }
@@ -202,26 +209,20 @@ function AgentSidebar({ agents, selectedId, onSelect, compact = false }: {
 function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; onOpenChange: (open: boolean) => void; onSaved: () => void }) {
   const [serverValue, setServerValue] = useState<"require" | "free">("require");
   const [draft, setDraft] = useState<"require" | "free">("require");
-  const [serverAudit, setServerAudit] = useState({ enabled: false, intervalMs: 15 * 60_000 });
-  const [draftAudit, setDraftAudit] = useState({ enabled: false, intervalMs: 15 * 60_000 });
-  const [draftAuditGapMinutes, setDraftAuditGapMinutes] = useState("15");
   const [serverReplyMode, setServerReplyMode] = useState<"card" | "cli">("card");
   const [draftReplyMode, setDraftReplyMode] = useState<"card" | "cli">("card");
   const [agentIds, setAgentIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const dirty = draft !== serverValue || draftReplyMode !== serverReplyMode
-    || draftAudit.enabled !== serverAudit.enabled || draftAuditGapMinutes !== formatAuditGapMinutes(serverAudit.intervalMs);
+  const dirty = draft !== serverValue || draftReplyMode !== serverReplyMode;
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
     setLoading(true);
-    void privateGet<ConfigResponse>("/api/config", { signal: controller.signal }).then((value) => {
+    void privateGet<ConfigResponse>("/api/config?chats=0", { signal: controller.signal }).then((value) => {
       setServerValue(value.mentionPolicy);
       setDraft(value.mentionPolicy);
-      setServerAudit(value.inboxAudit);
-      setDraftAudit(value.inboxAudit);
-      setDraftAuditGapMinutes(formatAuditGapMinutes(value.inboxAudit.intervalMs));
       setServerReplyMode(value.replyMode ?? "card");
       setDraftReplyMode(value.replyMode ?? "card");
       setAgentIds(value.agents.map((agent) => agent.agentId));
@@ -235,31 +236,15 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
     onOpenChange(next);
   };
   const save = async () => {
-    const auditChanged = draftAudit.enabled !== serverAudit.enabled || draftAuditGapMinutes !== formatAuditGapMinutes(serverAudit.intervalMs);
-    const editedIntervalMs = auditChanged ? auditGapFromMinutes(draftAuditGapMinutes) : null;
-    if (auditChanged && editedIntervalMs === null) {
-      setFeedback("巡检间隔必须在 1 到 1440 分钟之间。");
-      return;
-    }
-    const intervalMs = editedIntervalMs ?? serverAudit.intervalMs;
     setLoading(true);
+    setSaving(true);
     try {
       let result: { revision: string; applyState: string } | null = null;
       if (draft !== serverValue) result = await mutateConfig({ operation: "set-global-mention", value: draft });
       const replyModeChanged = draftReplyMode !== serverReplyMode;
       if (replyModeChanged) result = await mutateConfig({ operation: "set-global-reply-mode", value: draftReplyMode });
-      if (auditChanged) {
-        result = await mutateConfig({
-          operation: "set-global-inbox-audit",
-          ...(draftAudit.enabled !== serverAudit.enabled ? { enabled: draftAudit.enabled } : {}),
-          ...(draftAuditGapMinutes !== formatAuditGapMinutes(serverAudit.intervalMs) ? { intervalMs } : {}),
-        });
-      }
       setServerValue(draft);
       setServerReplyMode(draftReplyMode);
-      setServerAudit({ ...draftAudit, intervalMs });
-      setDraftAudit((current) => ({ ...current, intervalMs }));
-      setDraftAuditGapMinutes(formatAuditGapMinutes(intervalMs));
       // Reply mode is fixed per Runtime session, so each Agent re-applies; a busy Agent stays pending.
       const unapplied: string[] = [];
       if (replyModeChanged) {
@@ -278,7 +263,7 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
         : result ? `已保存 · ${replyModeChanged ? "applied" : result.applyState} · ${result.revision.slice(0, 20)}…` : "没有需要保存的修改");
       onSaved();
     } catch (error) { setFeedback(error instanceof Error ? error.message : String(error)); }
-    finally { setLoading(false); }
+    finally { setLoading(false); setSaving(false); }
   };
   return <Sheet open={open} onOpenChange={requestOpenChange} title="全局设置" description="只管理所有 Agent 共同继承的默认值；高级操作仍使用 CLI。">
     <div className="settings-form">
@@ -296,12 +281,7 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
         </select>
       </label>
       <p className="field-help">对所有 Agent 生效。保存后各 Agent 会依次重新加载（保留对话上下文）；正忙的 Agent 会保持待应用。</p>
-      <div className="audit-controls" aria-labelledby="global-inbox-audit-title">
-        <div className="audit-heading"><div><h3 id="global-inbox-audit-title">Inbox 巡检</h3><p>定时检查仍待处理的入站工作；关闭时不会安排巡检。</p></div><label className="audit-switch"><input aria-label="Inbox 巡检开关" type="checkbox" checked={draftAudit.enabled} disabled={loading} onChange={(event) => setDraftAudit((current) => ({ ...current, enabled: event.target.checked }))} /><span aria-hidden="true" /><b>{draftAudit.enabled ? "已开启" : "已关闭"}</b></label></div>
-        <label><span>巡检间隔（分钟）</span><input aria-label="全局巡检间隔（分钟）" type="number" min={MIN_AUDIT_GAP_MINUTES} max={MAX_AUDIT_GAP_MINUTES} step="any" inputMode="decimal" value={draftAuditGapMinutes} disabled={loading} onChange={(event) => setDraftAuditGapMinutes(event.target.value)} /></label>
-        <p className="field-help">可在关闭时预先调整；保存间隔本身不会开启巡检。</p>
-      </div>
-      <div className="form-actions"><Button onClick={() => { setDraft(serverValue); setDraftReplyMode(serverReplyMode); setDraftAudit(serverAudit); setDraftAuditGapMinutes(formatAuditGapMinutes(serverAudit.intervalMs)); }} disabled={!dirty || loading}>放弃草稿</Button><Button className="primary" onClick={save} disabled={!dirty || loading}>{loading ? "保存中…" : "保存全局设置"}</Button></div>
+      <div className="form-actions"><Button onClick={() => { setDraft(serverValue); setDraftReplyMode(serverReplyMode); }} disabled={!dirty || loading}>放弃草稿</Button><Button className="primary" onClick={save} disabled={!dirty || loading}>{saving ? "保存中…" : loading ? "读取中…" : "保存全局设置"}</Button></div>
       {feedback ? <p role="status" className="feedback">{feedback}</p> : null}
     </div>
   </Sheet>;
@@ -315,7 +295,7 @@ function GroupPolicyTable({ config, onSave, disabled }: {
   const [query, setQuery] = useState("");
   const [newChat, setNewChat] = useState("");
   const [newPolicy, setNewPolicy] = useState<"require" | "free">("require");
-  const groups = config.knownChats.filter((chat) => chat.kind === "group" && chat.override !== "inherit").filter((chat) => {
+  const groups = (config.knownChats ?? []).filter((chat) => chat.kind === "group" && chat.override !== "inherit").filter((chat) => {
     const needle = query.trim().toLocaleLowerCase();
     return !needle || chat.chatId.toLocaleLowerCase().includes(needle) || String(chat.displayName || "未解析群名").toLocaleLowerCase().includes(needle);
   });
@@ -339,6 +319,8 @@ function formatReadiness(readiness: RuntimeReadinessView): string {
     `Readiness ${readiness.state}`,
     readiness.reason,
     readiness.nextAction,
+    readiness.version,
+    readiness.executable,
   ].filter(Boolean).join(" · ");
 }
 
@@ -376,24 +358,23 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
     const token = gate.current.issue();
     setLoading(true);
     try {
-      const next = await privateGet<ConfigResponse>(`/api/config?agent=${encodeURIComponent(agentId)}`);
+      // Only the reply tab lists groups; the other tabs skip the Feishu group-name lookup.
+      const next = await privateGet<ConfigResponse>(`/api/config?agent=${encodeURIComponent(agentId)}${section === "reply" ? "" : "&chats=0"}`);
       if (!gate.current.accepts(token)) return;
       const agent = next.agents[0];
       if (!agent) throw new Error("配置投影中没有当前 Agent");
-      const intervalMs = agent.inboxAudit.override.intervalMs === "inherit"
-        ? agent.inboxAudit.effective.intervalMs : agent.inboxAudit.override.intervalMs;
       const values = {
         runtime: agent.runtimeOption || agent.runtime, model: agent.model, effort: agent.effort || "default", mention: agent.mention.override,
-        auditEnabled: agent.inboxAudit.override.enabled,
-        auditIntervalInherited: agent.inboxAudit.override.intervalMs === "inherit",
-        auditGapMinutes: formatAuditGapMinutes(intervalMs),
+        sandbox: agent.sandbox || "danger-full-access", fastMode: agent.fastMode === true,
+        auditEnabled: agent.inboxAudit.effective.enabled,
+        auditGapMinutes: formatAuditGapMinutes(agent.inboxAudit.effective.intervalMs),
       };
       setResponse(next);
       setServerDraft(values);
       if (!preserveDraft || !dirty) setDraft(values);
     } catch (error) { if (gate.current.accepts(token)) setFeedback(error instanceof Error ? error.message : String(error)); }
     finally { if (gate.current.accepts(token)) setLoading(false); }
-  }, [agentId, dirty]);
+  }, [agentId, dirty, section]);
   useEffect(() => { void load(false); }, [agentId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (refreshKey > 0) void load(true); }, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -428,13 +409,16 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
     ? (models.some((item) => item.id === model) ? models : [{ id: model, label: `${model} · 当前配置` }, ...models])
     : [{ id: model, label: unavailableLabel }];
   const efforts = directoryReady && model !== "default" ? models.find((item) => item.id === model)?.supportedReasoningEfforts || [] : [];
-  const runtimeDirty = draft.runtime !== serverDraft.runtime || draft.model !== serverDraft.model || draft.effort !== serverDraft.effort;
-  const auditEnabled = draft.auditEnabled === "on" || draft.auditEnabled === "off" ? draft.auditEnabled : "inherit";
-  const auditIntervalInherited = draft.auditIntervalInherited === true;
+  const sandboxDirty = draft.sandbox !== serverDraft.sandbox;
+  const fastDirty = draft.fastMode !== serverDraft.fastMode;
+  // Unknown until the directory loads; only an explicit false from the catalog blocks the switch.
+  const fastSupported = runtime === "codex" && !(directoryReady && models.find((item) => item.id === model)?.supportsFast === false);
+  // Sandbox is a Codex launch parameter, so it is applied the same way as a model change.
+  const runtimeDirty = draft.runtime !== serverDraft.runtime || draft.model !== serverDraft.model || draft.effort !== serverDraft.effort || sandboxDirty || fastDirty;
+  const auditEnabled = draft.auditEnabled === true;
   const auditGapMinutes = String(draft.auditGapMinutes || "");
-  const auditDirty = draft.auditEnabled !== serverDraft.auditEnabled
-    || draft.auditIntervalInherited !== serverDraft.auditIntervalInherited
-    || draft.auditGapMinutes !== serverDraft.auditGapMinutes;
+  const auditGapDirty = draft.auditGapMinutes !== serverDraft.auditGapMinutes;
+  const auditDirty = draft.auditEnabled !== serverDraft.auditEnabled || auditGapDirty;
 
   const requestApply = () => jsonFetch<{ agentId: string; applyState: string }>("/api/config/apply", {
     method: "POST",
@@ -445,7 +429,7 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
   const save = async () => {
     if (!config) return;
     const auditIntervalMs = auditGapFromMinutes(draft.auditGapMinutes);
-    if (auditDirty && !auditIntervalInherited && auditIntervalMs === null) {
+    if (auditGapDirty && auditIntervalMs === null) {
       setFeedback("巡检间隔必须在 1 到 1440 分钟之间；草稿已保留。");
       return;
     }
@@ -455,12 +439,13 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
       if (draft.runtime !== serverDraft.runtime) operations.push({ operation: "set-agent-runtime", agentId, runtime: draft.runtime, model: draft.model });
       else if (draft.model !== serverDraft.model) operations.push({ operation: "set-agent-model", agentId, model: draft.model });
       if (draft.effort !== serverDraft.effort) operations.push({ operation: "set-agent-effort", agentId, effort: draft.effort });
+      if (fastDirty) operations.push({ operation: "set-agent-fast-mode", agentId, value: draft.fastMode === true });
+      if (sandboxDirty) operations.push({ operation: "set-agent-sandbox", agentId, value: draft.sandbox });
       if (draft.mention !== serverDraft.mention) operations.push({ operation: "set-agent-mention", agentId, value: draft.mention });
       if (auditDirty) operations.push({
         operation: "set-agent-inbox-audit", agentId,
-        ...(draft.auditEnabled !== serverDraft.auditEnabled ? { enabled: auditEnabled === "inherit" ? "inherit" : auditEnabled === "on" } : {}),
-        ...(draft.auditIntervalInherited !== serverDraft.auditIntervalInherited || draft.auditGapMinutes !== serverDraft.auditGapMinutes
-          ? { intervalMs: auditIntervalInherited ? "inherit" : auditIntervalMs! } : {}),
+        ...(draft.auditEnabled !== serverDraft.auditEnabled ? { enabled: auditEnabled } : {}),
+        ...(auditGapDirty ? { intervalMs: auditIntervalMs! } : {}),
       });
       let latest: { revision: string; applyState: string } | null = null;
       for (const operation of operations) latest = await mutateConfig(operation);
@@ -502,9 +487,6 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
 
   if (!config && loading) return <EmptyState title="加载 Agent 配置…" />;
   if (!config) return <EmptyState title="配置不可用" detail={feedback || "请重试"} />;
-  const auditEffective = config.inboxAudit.effective;
-  const auditSource = config.inboxAudit.source;
-  const auditStateDescription = `${auditSource.enabled === "agent" ? "当前 Agent 已单独设置" : auditSource.enabled === "global" ? "当前使用全局设置" : "当前使用默认设置"}：${auditEffective.enabled ? "已开启" : "已关闭"}，每 ${formatAuditGapMinutes(auditEffective.intervalMs)} 分钟`;
   const applyStateLabel = config.apply.applyState === "pending" ? "待应用" : config.apply.applyState === "applied" ? "已应用" : "状态未知";
   const actions = dirty || (section === "model" && config.apply.applyState === "pending") ? <div className="form-actions">
     {dirty ? <Button disabled={loading} onClick={() => setDraft(serverDraft)}>放弃草稿</Button> : null}
@@ -525,16 +507,39 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
   </div>;
   if (section === "advanced") return <div className="configuration-page">
     <section className="config-section">
-      <div className="audit-controls" aria-labelledby="agent-inbox-audit-title">
-        <div className="audit-heading"><div><h3 id="agent-inbox-audit-title">Inbox 巡检</h3><p>{auditStateDescription}。</p></div></div>
-        <div className="config-grid audit-grid">
-          <label><span>巡检设置</span><select aria-label="Inbox 巡检设置" value={auditEnabled} disabled={loading} onChange={(event) => update("auditEnabled", event.target.value)}><option value="inherit">跟随全局设置</option><option value="on">为此 Agent 开启</option><option value="off">为此 Agent 关闭</option></select></label>
-          <label><span>巡检间隔（分钟）</span><input aria-label="Agent 巡检间隔（分钟）" type="number" min={MIN_AUDIT_GAP_MINUTES} max={MAX_AUDIT_GAP_MINUTES} step="any" inputMode="decimal" value={auditGapMinutes} disabled={loading} onChange={(event) => setDraft((current) => ({ ...current, auditGapMinutes: event.target.value, auditIntervalInherited: false }))} /></label>
+      <div className="audit-controls" aria-labelledby="agent-sandbox-title">
+        <div className="audit-heading"><div><h3 id="agent-sandbox-title">沙箱</h3><p>决定 Agent 能改动你电脑上的哪些文件。它干活时不会停下来问你，所以边界要在这里先定好。</p></div></div>
+        <div className="sandbox-options" role="radiogroup" aria-label="沙箱模式">
+          {SANDBOX_OPTIONS.map((option) => {
+            const checked = (draft.sandbox || "danger-full-access") === option.value;
+            return <label key={option.value} className={cn("sandbox-option", checked && "active")}>
+              <input type="radio" name={`sandbox-${agentId}`} value={option.value} checked={checked} disabled={loading} onChange={() => update("sandbox", option.value)} />
+              <span className="sandbox-option-text"><strong>{option.title}</strong><Badge>{option.tag}</Badge><small>{option.detail}</small></span>
+            </label>;
+          })}
         </div>
-        <div className="audit-inline-actions"><span>{auditIntervalInherited ? "间隔跟随全局设置；编辑数字后会仅作用于此 Agent。" : "此 Agent 使用单独的巡检间隔。"}</span>{!auditIntervalInherited ? <Button disabled={loading} onClick={() => setDraft((current) => ({ ...current, auditIntervalInherited: true, auditGapMinutes: formatAuditGapMinutes(auditEffective.intervalMs) }))}>间隔跟随全局设置</Button> : null}</div>
-        <p className="field-help">即使关闭巡检，也可保存间隔；间隔修改不会开启巡检。</p>
+        {runtime === "codex" ? <details className="sandbox-scope">
+          <summary>选「只改自己的工作区」后，具体能改哪些地方</summary>
+          <ul>
+            <li>它的工作区 <code>~/.larkin/agents/{agentId}/</code>，AGENTS.md 也在这里</li>
+            <li>它的消息、提醒和飞书登录记录 <code>~/.larkin/state/agents/{agentId}/</code></li>
+            <li>临时文件夹，比如 <code>/tmp</code></li>
+          </ul>
+          <p>其余位置都只能看、不能改。因此它也改不了 Larkin 的设置，Inbox 巡检会无法标记完成。</p>
+        </details> : <p className="field-help">只对 Codex 生效。当前是 {runtime}，这项保存了也不会改变它的行为。</p>}
+        <p className="field-help">保存后自动应用；Agent 正忙时会等它空下来再切换。</p>
       </div>
-      {actions}{status}
+      {sandboxDirty ? <>{actions}{status}</> : null}
+    </section>
+    <section className="config-section">
+      <div className="audit-controls" aria-labelledby="agent-inbox-audit-title">
+        <div className="audit-heading"><div><h3 id="agent-inbox-audit-title">Inbox 巡检</h3><p>Agent 在群里被叫到之后（有人 @ 它，或这个群设成了不用 @），过一阵子回到那个群或话题再看一遍：当时有没有没回上的，后来有没有人接着找它。该回的补上，没事就不出声。</p></div><label className="audit-switch"><input aria-label="Inbox 巡检开关" type="checkbox" checked={auditEnabled} disabled={loading} onChange={(event) => update("auditEnabled", event.target.checked)} /><span aria-hidden="true" /><b>{auditEnabled ? "已开启" : "已关闭"}</b></label></div>
+        <div className="config-grid audit-grid">
+          <label><span>巡检间隔（分钟）</span><input aria-label="巡检间隔（分钟）" type="number" min={MIN_AUDIT_GAP_MINUTES} max={MAX_AUDIT_GAP_MINUTES} step="any" inputMode="decimal" value={auditGapMinutes} disabled={loading} onChange={(event) => update("auditGapMinutes", event.target.value)} /></label>
+        </div>
+        <p className="field-help">只看叫过它的群和话题；从没叫过它的群、私聊都不看。这段时间没人叫它就跳过，不花额度。间隔越短补得越快，额度也花得越多。</p>
+      </div>
+      {sandboxDirty ? null : <>{actions}{status}</>}
     </section>
   </div>;
   return <div className="configuration-page">
@@ -542,10 +547,11 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
       <p className="cli-guidance">更多选项可以让 Agent 运行 <code>larkin config --help</code> 自己改。</p>
       {readiness ? <p className="field-help">{formatReadiness(readiness)}</p> : null}
       <div className="config-grid">
-        <label><span>Runtime</span><select value={runtime} disabled={loading} onChange={(event) => { update("runtime", event.target.value); update("model", "default"); update("effort", "default"); }}>{(response?.runtimeOptions || RUNTIME_OPTIONS).map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
+        <label><span>Runtime</span><select value={runtime} disabled={loading} onChange={(event) => { update("runtime", event.target.value); update("model", "default"); update("effort", "default"); if (event.target.value !== "codex") update("fastMode", false); }}>{(response?.runtimeOptions || RUNTIME_OPTIONS).map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
         <label><span>Model</span><select value={model} disabled={loading || !directoryReady} onChange={(event) => { update("model", event.target.value); if (event.target.value === "default") update("effort", "default"); }}>{visibleModels.map((item) => <option value={item.id} key={item.id}>{item.label || item.id}</option>)}</select></label>
         <label><span>Effort</span><select value={String(draft.effort || "default")} disabled={loading || !directoryReady || model === "default" || !efforts.length} onChange={(event) => update("effort", event.target.value)}><option value="default">default · 不指定</option>{efforts.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
       </div>
+      {runtime === "codex" ? <div className="fast-mode-row"><div><strong>Fast 模式</strong><p className="field-help">{fastSupported ? "回复更快，消耗的用量也更多。关闭时跟随本机 Codex 自己的设置。" : "这个模型不支持 Fast。"}</p></div><label className="audit-switch"><input type="checkbox" aria-label="Fast 模式" checked={draft.fastMode === true} disabled={loading || (!fastSupported && draft.fastMode !== true)} onChange={(event) => update("fastMode", event.target.checked)} /><span aria-hidden="true" /><b>{draft.fastMode === true ? "已开启" : "已关闭"}</b></label></div> : null}
       {actions}{status}
     </section>
   </div>;
@@ -569,10 +575,6 @@ function ActivityPanel({ agent }: { agent: DashboardAgent }) {
       <section className="content-section"><div className="section-heading"><div><h3>提醒</h3><p>在聊天里让它记下的提醒。</p></div><Badge>{agent.activeReminders}</Badge></div><Reminders agent={agent} /></section>
     </div>
   </div>;
-}
-
-function RuntimeSummary({ agent }: { agent: DashboardAgent }) {
-  return <section className="content-section runtime-summary"><h3>运行摘要</h3><dl className="facts"><div><dt>Runtime</dt><dd>{agent.runtime}</dd></div><div><dt>Readiness</dt><dd>{agent.runtimeReadiness ? `${agent.runtimeReadiness.state}${agent.runtimeReadiness.version ? ` · ${agent.runtimeReadiness.version}` : ""}${agent.runtimeReadiness.executable ? ` · ${agent.runtimeReadiness.executable}` : ""}${agent.runtimeReadiness.reason ? ` · ${agent.runtimeReadiness.reason}` : ""}${agent.runtimeReadiness.nextAction ? ` · ${agent.runtimeReadiness.nextAction}` : ""}` : "unknown"}</dd></div><div><dt>Model</dt><dd>{agent.model}</dd></div><div><dt>Effort</dt><dd>{agent.effort || "default"}</dd></div><div><dt>入站</dt><dd>{agent.inbound.state}</dd></div><div><dt>提醒</dt><dd>{agent.activeReminders}</dd></div><div><dt>指示灯</dt><dd>{agent.eyeIndicator.stuck ? "疑似卡住" : `${agent.eyeIndicator.pendingCount} pending`}</dd></div></dl></section>;
 }
 
 function Timeline({ items }: { items: DashboardAgent["feed"] }) {
@@ -707,6 +709,11 @@ function Workspace({ agentId, onDirtyChange }: { agentId: string; onDirtyChange:
   </div>;
 }
 
+const SANDBOX_OPTIONS = [
+  { value: "danger-full-access", title: "不限制", tag: "默认", detail: "能改这台电脑上的任何文件，和你自己在终端里用 Codex 一样。适合只有你在用、需要跨项目干活的 Agent。" },
+  { value: "workspace-write", title: "只改自己的工作区", tag: "更安全", detail: "其他文件只能看、不能改；联网和收发飞书照常。适合放在群里、很多人都能使唤的 Agent。" },
+] as const;
+
 const AGENTS_TEMPLATE = "# 角色\n\n（这个 Agent 是谁，替谁做事）\n\n# 说话方式\n\n（语气、篇幅、要不要用表情）\n\n# 工作习惯\n\n（遇到什么情况怎么做）\n\n# 不要做的事\n\n";
 const CLAUDE_IMPORTS_AGENTS = "@AGENTS.md\n";
 
@@ -759,14 +766,14 @@ function AgentPersona({ agent, onDirtyChange }: { agent: DashboardAgent; onDirty
     : claudeView?.file ? <>当前是 Claude runtime，读取的是 CLAUDE.md。它有单独的内容，没有引用 AGENTS.md，可以在「工作区」里编辑。</>
     : agentsView?.file ? <>当前是 Claude runtime，还没有 CLAUDE.md，这份设定不会被读取。<Button disabled={creating} onClick={() => void createFiles([{ name: "CLAUDE.md", content: CLAUDE_IMPORTS_AGENTS }])}>新建 CLAUDE.md 并引用 AGENTS.md</Button></>
     : null;
-  const [view, setView] = useState<"agents" | CapabilityKind>("agents");
+  const [view, setView] = useState<"agents" | "builtin" | CapabilityKind>("agents");
   // Runtime decides which folders hold the capabilities, so reload them when it changes.
   const capabilities = useCapabilities(agentId, agent.runtime);
   const countOf = (kind: CapabilityKind) => capabilities.data?.items.filter((item) => item.kind === kind).length;
   return <section className="persona-section">
     <div className="persona-switch" role="group" aria-label="设定分类">
-      {(["agents", ...CAPABILITY_KINDS] as const).map((item) => <button key={item} type="button" aria-pressed={view === item} className={view === item ? "active" : ""} onClick={() => setView(item)}>
-        {item === "agents" ? "AGENTS.md" : CAPABILITY_LABELS[item]}{item !== "agents" && countOf(item) !== undefined && !capabilities.data?.unsupported.includes(item) ? <small>{countOf(item)}</small> : null}
+      {(["agents", "builtin", ...CAPABILITY_KINDS] as const).map((item) => <button key={item} type="button" aria-pressed={view === item} className={view === item ? "active" : ""} onClick={() => setView(item)}>
+        {item === "agents" ? "AGENTS.md" : item === "builtin" ? "内置指令" : CAPABILITY_LABELS[item]}{item !== "agents" && item !== "builtin" && countOf(item) !== undefined && !capabilities.data?.unsupported.includes(item) ? <small>{countOf(item)}</small> : null}
       </button>)}
     </div>
     <div hidden={view !== "agents"}>
@@ -787,8 +794,34 @@ function AgentPersona({ agent, onDirtyChange }: { agent: DashboardAgent; onDirty
         </div>
         : null}
     </div>
-    {view !== "agents" ? <CapabilityList agent={agent} kind={view} state={capabilities} /> : null}
+    {view === "builtin" ? <StandingPromptView agent={agent} /> : null}
+    {view !== "agents" && view !== "builtin" ? <CapabilityList agent={agent} kind={view} state={capabilities} /> : null}
   </section>;
+}
+
+/** Read-only view of the instructions Larkin adds to every new session; users customize through AGENTS.md instead. */
+function StandingPromptView({ agent }: { agent: DashboardAgent }) {
+  const [data, setData] = useState<StandingPromptResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const gate = useRef(createLatestResponseGate());
+  const agentId = agent.agentId;
+  const load = useCallback(async () => {
+    const token = gate.current.issue();
+    try {
+      const value = await jsonFetch<StandingPromptResponse>(`/api/agent-standing-prompt?agent=${encodeURIComponent(agentId)}`);
+      if (!gate.current.accepts(token)) return;
+      setData(value);
+      setError(null);
+    } catch (reason) { if (gate.current.accepts(token)) setError(reason instanceof Error ? reason.message : String(reason)); }
+  }, [agentId]);
+  useEffect(() => { void load(); }, [load, agent.runtime]);
+  if (error) return <EmptyState title="内置指令读取失败" detail={error} />;
+  if (!data) return <EmptyState title="读取内置指令…" />;
+  return <div className="standing-prompt">
+    <div className="section-heading"><div><p>larkin 每次开新会话时自动加给 Agent 的指令，只读。想补充或调整行为，写进 AGENTS.md，两者会同时生效；尽量不要和这里的规则冲突。</p></div><Button onClick={() => void load()}>刷新</Button></div>
+    <div className="capability-detail-badges"><Badge>{data.version}</Badge><Badge>{data.runtime}</Badge><Badge>{data.replyMode === "card" ? "卡片回复" : "命令行回复"}</Badge></div>
+    <div className="workspace-preview" role="region" aria-label="内置指令内容"><pre>{data.content}</pre></div>
+  </div>;
 }
 
 const CAPABILITY_KINDS = ["skill", "subagent", "plugin", "mcp"] as const satisfies readonly CapabilityKind[];
@@ -872,7 +905,7 @@ function AgentHeader({ agent }: { agent: DashboardAgent }) {
   const context = usage.contextPercent != null
     ? `上下文 ${Math.round(Number(usage.contextPercent))}% · ${formatNumber(usage.latestTokens)} / ${formatNumber(usage.contextWindow)}`
     : `上下文 ${agent.session?.turns || 0} turns`;
-  return <header className="agent-header"><div className="agent-title"><AgentAvatar agent={agent} /><div><p>{agent.agentId}</p><h1>{agent.displayName || agent.name}</h1></div></div><div className="agent-header-summary"><Badge className={agent.connection.state === "connected" ? "success" : agent.issue ? "danger-badge" : ""}>{agent.connection.state}</Badge><span>{agent.runtime}</span><span>{agent.model}</span><span>{agent.effort || "default effort"}</span><span>{context}</span><span>累计 {formatNumber(usage.cumulativeTokens)} tokens</span><span>最近一轮 {formatNumber(usage.latestTokens)} tokens</span><span>Compact {formatNumber(compaction.count)} 次 · {compaction.active ? "active" : "idle"}</span><span>最近消息 {agent.lastDeliver ? formatAge(agent.lastDeliver.ageSec) : "暂无"}</span><span>{agent.lastActivity?.detail || activityLabel(agent)}</span></div></header>;
+  return <header className="agent-header"><div className="agent-title"><AgentAvatar agent={agent} /><div><p>{agent.agentId}</p><h1>{agent.displayName || agent.name}</h1></div></div><div className="agent-header-summary"><Badge className={agent.connection.state === "connected" ? "success" : agent.issue ? "danger-badge" : ""}>{agent.connection.state}</Badge>{agent.eyeIndicator.stuck ? <Badge className="danger-badge">疑似卡住：有消息超过 3 分钟没处理</Badge> : null}<span>{agent.runtime}</span><span>{agent.model}</span><span>{agent.effort || "default effort"}</span><span>{context}</span><span>累计 {formatNumber(usage.cumulativeTokens)} tokens</span><span>最近一轮 {formatNumber(usage.latestTokens)} tokens</span><span>Compact {formatNumber(compaction.count)} 次 · {compaction.active ? "active" : "idle"}</span><span>最近消息 {agent.lastDeliver ? formatAge(agent.lastDeliver.ageSec) : "暂无"}</span><span>{agent.lastActivity?.detail || activityLabel(agent)}</span></div></header>;
 }
 
 export function App() {
@@ -981,7 +1014,6 @@ export function App() {
           <section role="tabpanel" hidden={tab !== "reply"}><AgentConfiguration section="reply" agentId={selected.agentId} readiness={null} onDirtyChange={setReplyDirty} onSaved={refreshConfig} refreshKey={configRefreshKey} /></section>
           <section role="tabpanel" hidden={tab !== "advanced"}><div className="runtime-page">
             <AgentConfiguration section="advanced" agentId={selected.agentId} readiness={null} onDirtyChange={setAdvancedDirty} onSaved={refreshConfig} refreshKey={configRefreshKey} />
-            <RuntimeSummary agent={selected} />
             <details className="runtime-details"><summary><ChevronRight size={16} aria-hidden="true" />工作区文件 <small>查看和编辑这个 Agent 工作区里的文本文件</small></summary><Workspace agentId={selected.agentId} onDirtyChange={setWorkspaceDirty} /></details>
             <details className="runtime-details"><summary><ChevronRight size={16} aria-hidden="true" />运行日志 <small>{selected.recentErrors.length ? `最近 ${selected.recentErrors.length} 个错误` : "排查问题时用"}</small></summary><LogsPanel agent={selected} /></details>
           </div></section>

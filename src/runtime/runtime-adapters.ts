@@ -18,6 +18,7 @@ import type {
 import { isPiThinkingLevel } from "./pi-model-catalog.js";
 import { PiRpcClient, type PiRpcClientOptions } from "./pi-rpc-client.js";
 import { traceProcessBoundary } from "../platform/process-boundary-trace.js";
+import { loadTelemetryConfig } from "../platform/telemetry-config.js";
 import { effectivePiStateDir, writePrivateAtomic } from "./pi-state-dir.js";
 import { resolvePiTmuxExtensionArg } from "./pi-tmux-injection.js";
 import {
@@ -222,6 +223,25 @@ function attachLines(stream: ReadableLike | null, listener: (message: Record<str
   });
 }
 
+/**
+ * Codex sandbox + config overrides for thread/start and thread/resume. Approval stays "never":
+ * nobody is there to click approve, so an escalation request would only stall the turn.
+ * workspace-write still has to let the Agent run larkin and lark-cli, so it keeps network
+ * access and adds the Agent state dir (Inbox state, lark-cli profile) and the telemetry spool.
+ * The config root itself stays read-only so an Agent cannot loosen its own sandbox.
+ */
+export function codexSandboxParams(config: Pick<RuntimeSessionCreate, "sandbox" | "reasoningEffort" | "stateDir" | "env">): Record<string, unknown> {
+  const overrides: Record<string, unknown> = config.reasoningEffort ? { model_reasoning_effort: config.reasoningEffort } : {};
+  if (config.sandbox !== "workspace-write") {
+    return { sandbox: "danger-full-access", ...(Object.keys(overrides).length ? { config: overrides } : {}) };
+  }
+  const env = { ...process.env, ...(config.env || {}) };
+  const writableRoots = [...new Set([config.stateDir, loadTelemetryConfig(env).spoolDir]
+    .filter((root): root is string => Boolean(root)).map((root) => path.resolve(root)))];
+  overrides.sandbox_workspace_write = { network_access: true, writable_roots: writableRoots };
+  return { sandbox: "workspace-write", config: overrides };
+}
+
 class CodexSession extends EventSession {
   private requestId = 0;
   private threadId: string | null = null;
@@ -347,11 +367,11 @@ class CodexSession extends EventSession {
         const threadParams: Record<string, unknown> = {
           cwd: this.config.workspaceDir,
           approvalPolicy: "never",
-          sandbox: "danger-full-access",
           developerInstructions: this.config.standingPrompt.content,
           experimentalRawEvents: true,
           ...(configuredModel(this.config.model) ? { model: configuredModel(this.config.model) } : {}),
-          ...(this.config.reasoningEffort ? { config: { model_reasoning_effort: this.config.reasoningEffort } } : {}),
+          ...codexSandboxParams(this.config),
+          ...(this.config.fastMode ? { serviceTier: "fast" } : {}),
         };
         this.freshThreadParams = threadParams;
         this.request(this.config.resumeSessionId ? "thread/resume" : "thread/start", this.config.resumeSessionId

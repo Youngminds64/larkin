@@ -1,6 +1,6 @@
 import type http from "node:http";
-import { assertWriteRequest, boundedJson } from "./dashboard-config-controller.js";
-import { collectCapabilities, collectInstructionFiles, collectWorkspaceEntry, createInstructionFile, writeWorkspaceFile } from "./dashboard-view-model.js";
+import { assertWriteRequest, boundedJson, dashboardError } from "./dashboard-config-controller.js";
+import { collectCapabilities, collectInstructionFiles, collectStandingPrompt, collectWorkspaceEntry, createInstructionFile, writeWorkspaceFile } from "./dashboard-view-model.js";
 
 function statusCodeOf(error: unknown): number {
   return typeof error === "object" && error !== null && "statusCode" in error && typeof error.statusCode === "number" ? error.statusCode : 500;
@@ -11,7 +11,7 @@ function json(res: http.ServerResponse, statusCode: number, body: unknown): void
   res.end(JSON.stringify(body));
 }
 
-/** Workspace browsing (GET), rule files (AGENTS.md / CLAUDE.md), the read-only capability list, and CSRF-protected text-file writes for the dashboard server. */
+/** Workspace browsing (GET), rule files (AGENTS.md / CLAUDE.md), the read-only capability list and standing prompt, and CSRF-protected text-file writes for the dashboard server. */
 export function createDashboardWorkspaceController({ csrfCapability }: { csrfCapability: string }) {
   return {
     async handle(req: http.IncomingMessage, res: http.ServerResponse, requestUrl: URL): Promise<boolean> {
@@ -21,8 +21,9 @@ export function createDashboardWorkspaceController({ csrfCapability }: { csrfCap
           assertWriteRequest(req, csrfCapability);
           // JSON escaping can roughly double a 1 MB text file.
           body = await boundedJson(req, 3 * 1024 * 1024);
-        } catch {
-          json(res, 403, { error: "workspace write rejected" });
+        } catch (error) {
+          const { status, body: failure } = dashboardError(error, "保存文件失败");
+          json(res, status, failure);
           return true;
         }
         try {
@@ -39,8 +40,9 @@ export function createDashboardWorkspaceController({ csrfCapability }: { csrfCap
         try {
           assertWriteRequest(req, csrfCapability);
           body = await boundedJson(req, 3 * 1024 * 1024);
-        } catch {
-          json(res, 403, { error: "rule file create rejected" });
+        } catch (error) {
+          const { status, body: failure } = dashboardError(error, "新建规则文件失败");
+          json(res, status, failure);
           return true;
         }
         try {
@@ -54,6 +56,11 @@ export function createDashboardWorkspaceController({ csrfCapability }: { csrfCap
       }
       if (requestUrl.pathname === "/api/agent-capabilities") {
         try { json(res, 200, collectCapabilities(requestUrl.searchParams.get("agent"))); }
+        catch (error) { json(res, statusCodeOf(error), { error: error instanceof Error ? error.message : String(error) }); }
+        return true;
+      }
+      if (requestUrl.pathname === "/api/agent-standing-prompt") {
+        try { json(res, 200, collectStandingPrompt(requestUrl.searchParams.get("agent"))); }
         catch (error) { json(res, statusCodeOf(error), { error: error instanceof Error ? error.message : String(error) }); }
         return true;
       }
