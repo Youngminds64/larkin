@@ -14,11 +14,10 @@ import "../platform/check-bun-version.cjs";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { currentProcessMetadata, readJson } from "../platform/process-state.js";
-import { prepareDashboardLaunch } from "../dashboard/dashboard-lifecycle.js";
+import { loadDashboardCapability, prepareDashboardLaunch } from "../dashboard/dashboard-lifecycle.js";
 import { DASHBOARD_BUILD_FINGERPRINT, DASHBOARD_BUILD_VERSION, PACKAGE_VERSION, collectStatus, loadDashboardConfig, resolveDashboardAvatarSource } from "../dashboard/dashboard-view-model.js";
 import { renderDashboardHtml } from "../dashboard/dashboard-template.js";
 import { createDashboardConfigController, createPiModelDirectoryResolver } from "../dashboard/dashboard-config-controller.js";
@@ -66,10 +65,8 @@ if (preparedDashboard.action === "reuse") {
 }
 const dashboardLaunchLock = { release: preparedDashboard.release };
 
-const csrfCapability = crypto.randomBytes(32).toString("base64url");
-// Public per-process id: a page compares it with /api/status to notice that the dashboard restarted.
-const dashboardInstance = crypto.randomBytes(8).toString("hex");
-const HTML = renderDashboardHtml(PACKAGE_VERSION, DASHBOARD_BUILD_VERSION, BUILD_FINGERPRINT, csrfCapability, dashboardInstance);
+const csrfCapability = loadDashboardCapability(path.join(startupConfig.larkinHome, "dashboard-capability"));
+const HTML = renderDashboardHtml(PACKAGE_VERSION, DASHBOARD_BUILD_VERSION, BUILD_FINGERPRINT, csrfCapability);
 const piModelResolver = createPiModelDirectoryResolver();
 const configController = createDashboardConfigController({ csrfCapability, piModelDirectoryResolver: piModelResolver });
 const avatarController = createDashboardAvatarController({ resolveSource: resolveDashboardAvatarSource });
@@ -96,7 +93,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.url === "/api/status") {
     let body;
-    try { body = JSON.stringify({ ...await collectStatus({ piModelResolver }), dashboardInstance }); }
+    try { body = JSON.stringify(await collectStatus({ piModelResolver })); }
     catch (error) { res.writeHead(500, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) })); return; }
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(body);

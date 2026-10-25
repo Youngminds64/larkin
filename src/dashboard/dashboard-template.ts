@@ -10,14 +10,12 @@ export function renderDashboardHtml(
   dashboardVersion: unknown = packageVersion,
   buildFingerprint: unknown = null,
   csrfCapability: unknown = null,
-  dashboardInstance: unknown = null,
 ): string {
   const bootstrap = safeJson({
     packageVersion: String(packageVersion || "dev"),
     dashboardVersion: String(dashboardVersion || packageVersion || "dev"),
     buildFingerprint: String(buildFingerprint || ""),
     csrfCapability: String(csrfCapability || ""),
-    dashboardInstance: String(dashboardInstance || ""),
   });
   return `<!doctype html>
 <html lang="zh-CN">
