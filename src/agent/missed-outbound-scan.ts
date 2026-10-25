@@ -281,16 +281,21 @@ export function reconcileInboxAuditTargetRetries(registryFile: string, retryFile
   return { recovered, remaining: loadRetryJournal(retryFile).targets.filter((row) => !agentId || row.agent_id === agentId).length };
 }
 
-// Self-contained in both reply modes: an audit wake polls runtime:reminder, so no
-// streaming card exists and only an explicit CLI reply reaches the user.
+// Self-contained in both reply modes: the audit turn starts from runtime:reminder,
+// so the explicit reply command is the only delivery path.
 function instruction(target: InboxAuditTarget, receiptValue: string): string {
   const [kind, chatId, threadId] = target.target.split(":");
   const thread = kind === "thread";
-  const history = thread
-    ? `Read this exact thread: larkin im +threads-messages-list --thread ${threadId} --order desc --page-size 20 --no-reactions --json.`
-    : `Read this exact chat: larkin im +chat-messages-list --chat-id ${chatId} --order desc --page-size 20 --no-reactions --json.`;
-  const reply = `larkin im +messages-reply --message-id ${target.anchor} --text '<reply>'${thread ? " --reply-in-thread" : ""} --json`;
-  return `${history} Inspect first. If a real finding needs a response, send it with \`${reply}\`; this audit turn has no streaming card, so assistant text alone is never delivered. Otherwise stay silent. When finished, run larkin inbox audit complete --receipt ${receiptValue} --outcome <no-finding|handled> --json.`;
+  const read = thread
+    ? `larkin im +threads-messages-list --thread ${threadId} --order desc --page-size 20 --no-reactions --json`
+    : `larkin im +chat-messages-list --chat-id ${chatId} --order desc --page-size 20 --no-reactions --json`;
+  const reply = `larkin im +messages-reply --message-id <om_id> --text '<reply>'${thread ? " --reply-in-thread" : ""} --json`;
+  return [
+    `1. Read this ${thread ? "thread" : "chat"}: \`${read}\`.`,
+    `2. A finding is a person's message that asked you something, or awaits a result you promised, with no later reply from you. ${target.anchor} woke you most recently.`,
+    `3. Answer each finding with \`${reply}\`, using that message's om_ id. This command is the only way a reply reaches the chat in this turn.`,
+    `4. Complete the receipt: \`larkin inbox audit complete --receipt ${receiptValue} --outcome handled --json\` after replying, or \`--outcome no-finding\` when there was nothing to answer.`,
+  ].join(" ");
 }
 
 function pendingRows(file: string, agentId: string): StoredTarget[] {
