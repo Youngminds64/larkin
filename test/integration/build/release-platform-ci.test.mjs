@@ -23,7 +23,7 @@ test("PR and main CI retain Linux source checks and add a blocking native Window
   assert.equal(workflow.match(/runs-on: ubuntu-24\.04/g)?.length, 2);
   assert.equal(workflow.match(/runs-on: windows-latest/g)?.length, 1);
   assert.deepEqual(JSON.parse(read("package.json")).trustedDependencies ?? [], []);
-  assert.equal(workflow.match(/bun-version: 1\.3\.14/g)?.length, 3);
+  assert.equal(workflow.match(/bun-version: 1\.4\.4/g)?.length, 3);
   assert.doesNotMatch(workflow, /actions\/setup-go|go-version:/);
   assert.equal(workflow.match(/bun install --frozen-lockfile/g)?.length, 3);
   assert.match(workflow, /bun run licenses:check/);
