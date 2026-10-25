@@ -2,7 +2,7 @@ import type http from "node:http";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { configApplyState, loadConfig, loadRuntimeModels, markConfigApplied, mutateConfig, resolveMentionPolicy, runtimeConfigSignature, safeConfigView, type ConfigMutation } from "../platform/config.js";
+import { configApplyState, loadConfig, loadRuntimeModels, markConfigApplied, mutateConfig, resolveMentionPolicy, runtimeConfigSignature, safeConfigView, type AgentSandbox, type ConfigMutation } from "../platform/config.js";
 import { requestAgentUpsert } from "../app/local-control.js";
 import { discoverClaudeModelCatalog, type DiscoverClaudeCatalogOptions } from "../runtime/claude-model-catalog.js";
 import { discoverCodexModelCatalog, type DiscoverCodexCatalogOptions } from "../runtime/codex-model-catalog.js";
@@ -71,6 +71,26 @@ function cleanChatName(value: unknown): string | null {
     .trim()
     .slice(0, 120);
   return cleaned || null;
+}
+
+function readSavedChatNames(file: string): Record<string, string> {
+  try {
+    if (fs.statSync(file).size > 256 * 1024) return {};
+    const value = JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value).flatMap(([chatId, name]) => {
+      const cleaned = cleanChatName(name);
+      return cleaned ? [[chatId, cleaned]] : [];
+    }));
+  } catch { return {}; }
+}
+
+function saveChatNames(file: string, names: Record<string, string>): void {
+  try {
+    const temp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(temp, `${JSON.stringify(names)}\n`, { mode: 0o600 });
+    fs.renameSync(temp, file);
+  } catch { /* names are a convenience; the next refresh retries */ }
 }
 
 function chatList(value: unknown): Array<{ chatId: string; name: string }> {
@@ -272,9 +292,10 @@ export function createCodexModelDirectoryResolver(options: {
         pending = (async () => {
           const catalog = await discover({ cwd: input.cwd, env: input.env });
           const models = [
-            { id: "default", label: `default: ${catalog.effectiveModel}` },
-            ...catalog.models.map(({ id, label, supportedReasoningEfforts, defaultReasoningEffort }) => ({
-              id, label, supportedReasoningEfforts, ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
+            { id: "default", label: `default: ${catalog.effectiveModel}`,
+              supportsFast: catalog.models.find((model) => model.id === catalog.effectiveModel)?.supportsFast ?? false },
+            ...catalog.models.map(({ id, label, supportedReasoningEfforts, defaultReasoningEffort, supportsFast }) => ({
+              id, label, supportedReasoningEfforts, ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}), supportsFast,
             })),
           ];
           cache.set(key, { expiresAt: now() + ttlMs, value: models });
@@ -323,9 +344,11 @@ export function createClaudeModelDirectoryResolver(options: {
   };
 }
 
-async function sanitizedView(env: Env, chatDirectoryResolver: ChatDirectoryResolver, onlyAgentId?: string, chatId?: string): Promise<Record<string, unknown>> {
+async function sanitizedView(env: Env, chatDirectoryResolver: ChatDirectoryResolver, onlyAgentId?: string, chatId?: string, withChats = true): Promise<Record<string, unknown>> {
   const { config } = loadConfig(env);
   const view = safeConfigView(config, onlyAgentId, chatId, configApplyState(env, config)) as { agents: Array<Record<string, unknown>>; [key: string]: unknown };
+  // Group names come from Feishu, one lookup per Agent; callers that only need the global values skip them.
+  if (!withChats) return view;
   for (const item of view.agents) {
     const agentId = String(item.agentId);
     const agent = config.agents[agentId];
@@ -339,15 +362,30 @@ async function sanitizedView(env: Env, chatDirectoryResolver: ChatDirectoryResol
     } catch { /* no known chat map yet */ }
     const configuredChatIds = Object.keys(agent?.chatMentionPolicies || {});
     const aliases = knownChatAliases(map, configuredChatIds);
-    let directory: Record<string, string> = {};
-    try {
-      directory = await chatDirectoryResolver.resolve({
+    // Names resolved before are saved per Agent and answer at once; Feishu refreshes them in the background
+    // and is awaited only for a group that has never been resolved.
+    const namesFile = path.join(agent.stateDir, "chat-names.json");
+    const saved = readSavedChatNames(namesFile);
+    let directory: Record<string, string> = saved;
+    if (configuredChatIds.length) {
+      const refresh = chatDirectoryResolver.resolve({
         agentId,
         chatIds: configuredChatIds,
         configDir: agent.larkConfigDir,
         profile: agent.feishuProfile,
+      }).then((names) => {
+        const merged = Object.fromEntries(configuredChatIds.flatMap((id) => {
+          const name = names[id] ?? saved[id];
+          return name ? [[id, name]] : [];
+        }));
+        saveChatNames(namesFile, merged);
+        return merged;
       });
-    } catch { /* explicit configuration remains visible without a resolved name */ }
+      if (configuredChatIds.every((id) => saved[id])) void refresh.catch(() => undefined);
+      else {
+        try { directory = await refresh; } catch { /* explicit configuration remains visible without a resolved name */ }
+      }
+    }
     item.knownChats = configuredChatIds.sort((left, right) => left.localeCompare(right, "en")).map((configuredChatId) => ({
       ...(aliases[configuredChatId] ?? { chatId: configuredChatId, displayName: null, kind: "group" as const }),
       displayName: directory[configuredChatId] ?? aliases[configuredChatId]?.displayName ?? null,
@@ -407,7 +445,8 @@ function dashboardMutation(value: Record<string, unknown>): ConfigMutation {
     "set-chat-mention": ["operation", "agentId", "chatId", "value"], "set-agent-runtime": ["operation", "agentId", "runtime", "model"],
     "set-agent-model": ["operation", "agentId", "model"], "set-agent-effort": ["operation", "agentId", "effort"],
     "set-global-inbox-audit": ["operation", "enabled", "intervalMs"], "set-agent-inbox-audit": ["operation", "agentId", "enabled", "intervalMs"],
-    "set-global-reply-mode": ["operation", "value"],
+    "set-global-reply-mode": ["operation", "value"], "set-agent-sandbox": ["operation", "agentId", "value"],
+    "set-agent-fast-mode": ["operation", "agentId", "value"],
   };
   if (!allowed[operation] || Object.keys(value).some((key) => !allowed[operation].includes(key))) throw new Error("unsupported operation");
   if (operation === "set-global-mention") return { kind: operation, value: String(value.value) as "require" | "free" };
@@ -426,6 +465,11 @@ function dashboardMutation(value: Record<string, unknown>): ConfigMutation {
   if (operation === "set-agent-mention") return { kind: operation, agentId, value: String(value.value) as "inherit" | "require" | "free" };
   if (operation === "set-chat-mention") return { kind: operation, agentId, chatId: String(value.chatId || ""), value: String(value.value) as "inherit" | "require" | "free" };
   if (operation === "set-agent-runtime") return { kind: operation, agentId, runtime: String(value.runtime || ""), ...(value.model ? { model: String(value.model) } : {}) };
+  if (operation === "set-agent-fast-mode") {
+    if (typeof value.value !== "boolean") throw new Error("invalid fast mode");
+    return { kind: operation, agentId, value: value.value };
+  }
+  if (operation === "set-agent-sandbox") return { kind: operation, agentId, value: String(value.value) as AgentSandbox };
   if (operation === "set-agent-model") return { kind: operation, agentId, model: String(value.model || "") };
   return { kind: "set-agent-effort", agentId, effort: value.effort === null || value.effort === "default" ? null : String(value.effort || "") };
 }
@@ -509,7 +553,7 @@ export function createDashboardConfigController({
         try {
           assertPrivateReadRequest(req, csrfCapability);
           json(res, 200, {
-            ...await sanitizedView(env, chatDirectoryResolver, requestUrl.searchParams.get("agent") || undefined, requestUrl.searchParams.get("chat") || undefined),
+            ...await sanitizedView(env, chatDirectoryResolver, requestUrl.searchParams.get("agent") || undefined, requestUrl.searchParams.get("chat") || undefined, requestUrl.searchParams.get("chats") !== "0"),
             runtimeModels: loadRuntimeModels(),
             runtimeOptions: [...RUNTIME_OPTIONS],
           });
@@ -571,6 +615,8 @@ export function createDashboardConfigController({
           } else if (error instanceof Error && error.message.startsWith("未知 runtime")) {
             json(res, 400, { error: error.message });
           } else {
+            // The response stays generic; the local log keeps the reason for troubleshooting.
+            console.warn(`[dashboard] config update rejected: ${error instanceof Error ? error.message : String(error)}`);
             json(res, 400, { error: "configuration update rejected" });
           }
         }
@@ -593,7 +639,10 @@ export function createDashboardConfigController({
           }
           markConfigApplied(env, agentId, expectedSignature);
           json(res, 200, { ok: true, agentId, applyState: "applied" });
-        } catch { json(res, 409, { error: "configuration saved but apply failed" }); }
+        } catch (error) {
+          console.warn(`[dashboard] config apply failed: ${error instanceof Error ? error.message : String(error)}`);
+          json(res, 409, { error: "configuration saved but apply failed" });
+        }
         return true;
       }
       return false;
