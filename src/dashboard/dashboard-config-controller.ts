@@ -571,6 +571,8 @@ export function createDashboardConfigController({
           } else if (error instanceof Error && error.message.startsWith("未知 runtime")) {
             json(res, 400, { error: error.message });
           } else {
+            // The response stays generic; the local log keeps the reason for troubleshooting.
+            console.warn(`[dashboard] config update rejected: ${error instanceof Error ? error.message : String(error)}`);
             json(res, 400, { error: "configuration update rejected" });
           }
         }
@@ -593,7 +595,10 @@ export function createDashboardConfigController({
           }
           markConfigApplied(env, agentId, expectedSignature);
           json(res, 200, { ok: true, agentId, applyState: "applied" });
-        } catch { json(res, 409, { error: "configuration saved but apply failed" }); }
+        } catch (error) {
+          console.warn(`[dashboard] config apply failed: ${error instanceof Error ? error.message : String(error)}`);
+          json(res, 409, { error: "configuration saved but apply failed" });
+        }
         return true;
       }
       return false;
