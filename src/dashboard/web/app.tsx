@@ -346,6 +346,14 @@ function formatReadiness(readiness: RuntimeReadinessView): string {
   ].filter(Boolean).join(" · ");
 }
 
+/** The draft fields each settings page owns. A page loads, compares and saves only these, so saving one
+ * page never resubmits another page's stale value. */
+const SECTION_FIELDS = {
+  model: ["runtime", "model", "effort"],
+  reply: ["mention"],
+  advanced: ["auditEnabled", "auditIntervalInherited", "auditGapMinutes"],
+} as const;
+
 function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSaved, refreshKey }: {
   /** Which part of the Agent's settings this instance edits; each saves only the fields it shows. */
   section: "model" | "reply" | "advanced";
@@ -387,12 +395,13 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
       if (!agent) throw new Error("配置投影中没有当前 Agent");
       const intervalMs = agent.inboxAudit.override.intervalMs === "inherit"
         ? agent.inboxAudit.effective.intervalMs : agent.inboxAudit.override.intervalMs;
-      const values = {
+      const all: Record<string, unknown> = {
         runtime: agent.runtimeOption || agent.runtime, model: agent.model, effort: agent.effort || "default", mention: agent.mention.override,
         auditEnabled: agent.inboxAudit.override.enabled,
         auditIntervalInherited: agent.inboxAudit.override.intervalMs === "inherit",
         auditGapMinutes: formatAuditGapMinutes(intervalMs),
       };
+      const values = Object.fromEntries(SECTION_FIELDS[section].map((key) => [key, all[key]]));
       setResponse(next);
       setServerDraft(values);
       if (!preserveDraft || !dirty) setDraft(values);

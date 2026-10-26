@@ -291,6 +291,46 @@ describe("Agent-centric dashboard workbench", () => {
     expect(within(dialog).getByRole("status")).toHaveTextContent("已保存");
   });
 
+  it("saves only the open page's fields, so an older draft on another page cannot revert a newer save", async () => {
+    const mutations: Array<Record<string, unknown>> = [];
+    let mention = "require";
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/status") return ok(status);
+      if (url.pathname === "/api/config" && init?.method === "PATCH") {
+        const mutation = JSON.parse(String(init.body));
+        mutations.push(mutation);
+        if (mutation.operation === "set-agent-mention") mention = mutation.value;
+        return ok({ revision: "sha256:next", applyState: "pending" });
+      }
+      if (url.pathname === "/api/config") {
+        const value = config(url.searchParams.get("agent") || undefined);
+        for (const agent of value.agents) if (agent.agentId === "cli_AgentB2") agent.mention = { ...agent.mention, override: mention, effective: mention };
+        return ok(value);
+      }
+      if (url.pathname === "/api/models/codex") return ok({ models: [{ id: "default", label: "default" }] });
+      throw new Error(`unexpected request ${url}`);
+    }));
+    render(<App />);
+    await screen.findByRole("heading", { level: 1, name: "Builder" });
+    await userEvent.click(screen.getByRole("tab", { name: "高级" }));
+    const gap = await screen.findByLabelText("Agent 巡检间隔（分钟）");
+    await userEvent.clear(gap);
+    await userEvent.type(gap, "30");
+
+    await userEvent.click(screen.getByRole("tab", { name: "回复规则" }));
+    await userEvent.selectOptions(await screen.findByLabelText("群消息策略"), "free");
+    await userEvent.click(screen.getByRole("button", { name: "保存 Agent 配置" }));
+    await waitFor(() => expect(mutations).toEqual([{ operation: "set-agent-mention", agentId: "cli_AgentB2", value: "free" }]));
+
+    await userEvent.click(screen.getByRole("tab", { name: "高级" }));
+    expect(screen.getByLabelText("Agent 巡检间隔（分钟）")).toHaveValue(30);
+    await userEvent.click(screen.getByRole("button", { name: "保存 Agent 配置" }));
+    await waitFor(() => expect(mutations).toHaveLength(2));
+    expect(mutations[1]).toEqual({ operation: "set-agent-inbox-audit", agentId: "cli_AgentB2", intervalMs: 30 * 60_000 });
+    expect(mention).toBe("free");
+  });
+
   it("keeps an Agent Inbox audit draft visible after a rejected save", async () => {
     const mutations: Array<Record<string, unknown>> = [];
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {

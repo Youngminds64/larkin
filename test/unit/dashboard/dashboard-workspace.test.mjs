@@ -82,6 +82,14 @@ test("dashboard workspace edits replace text files only when the loaded version 
     assert.throws(() => writeWorkspaceFile(config, agentId, "AGENTS.md", "stale\n", loaded.sha256), (error) => error.statusCode === 409);
     assert.equal(fs.readFileSync(path.join(workspace, "AGENTS.md"), "utf8"), "new rules\n");
 
+    // An Agent edit that lands while the new content is being written is not overwritten either.
+    assert.throws(() => writeWorkspaceFile(config, agentId, "AGENTS.md", "dashboard\n", saved.sha256, undefined, () => {
+      fs.writeFileSync(path.join(workspace, "AGENTS.md"), "agent edit\n");
+    }), (error) => error.statusCode === 409);
+    assert.equal(fs.readFileSync(path.join(workspace, "AGENTS.md"), "utf8"), "agent edit\n");
+    assert.deepEqual(fs.readdirSync(workspace).filter((name) => name.endsWith(".tmp")), []);
+    fs.writeFileSync(path.join(workspace, "AGENTS.md"), "new rules\n");
+
     const image = collectWorkspaceEntry(config, agentId, "image.png");
     assert.throws(() => writeWorkspaceFile(config, agentId, "image.png", "x", "0".repeat(64)), (error) => error.statusCode === 415);
     assert.equal(image.binary, true);

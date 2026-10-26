@@ -155,6 +155,10 @@ function sha256(bytes: Buffer): string {
  * Replace an existing text file in the Agent workspace. The write is optimistic:
  * it only lands when the file still hashes to what the editor loaded, so a
  * concurrent Agent edit is reported as a conflict instead of being overwritten.
+ * The hash is checked again after the new content is on disk and just before the
+ * replace, which narrows the race to the rename itself; a rename cannot compare and
+ * swap, so a write landing in that last instant still needs the writer's cooperation.
+ * `beforeReplace` lets tests act as that concurrent writer.
  */
 export function writeWorkspaceFile(
   config: DashboardWorkspaceConfig,
@@ -163,6 +167,7 @@ export function writeWorkspaceFile(
   content: unknown,
   expectedSha256: unknown,
   maxFileBytes = MAX_WORKSPACE_EDIT_BYTES,
+  beforeReplace?: () => void,
 ): WorkspaceProjection {
   if (typeof content !== "string" || typeof expectedSha256 !== "string" || !/^[0-9a-f]{64}$/.test(expectedSha256)) {
     throw httpError("需要 content 和 expectedSha256", 400);
@@ -173,18 +178,22 @@ export function writeWorkspaceFile(
   if (stat.size > maxFileBytes) throw httpError("文件超过 1 MB，不能在线编辑", 413);
   const current = fs.readFileSync(resolved);
   if (current.includes(0)) throw httpError("二进制文件不能在线编辑", 415);
-  if (sha256(current) !== expectedSha256) throw httpError("文件已被修改，请重新加载后再编辑", 409);
+  const conflict = () => httpError("文件已被修改，请重新加载后再编辑", 409);
+  if (sha256(current) !== expectedSha256) throw conflict();
   const next = Buffer.from(content, "utf8");
   if (next.byteLength > maxFileBytes) throw httpError("内容超过 1 MB", 413);
   if (next.includes(0)) throw httpError("内容不能包含 NUL 字符", 400);
   const temp = path.join(path.dirname(resolved), `.${path.basename(resolved)}.larkin-${crypto.randomBytes(6).toString("hex")}.tmp`);
   const fd = fs.openSync(temp, "wx", stat.mode & 0o777);
   try {
-    fs.writeFileSync(fd, next);
-    fs.fsyncSync(fd);
-  } finally { fs.closeSync(fd); }
-  try { fs.renameSync(temp, resolved); }
-  catch (error) { fs.rmSync(temp, { force: true }); throw error; }
+    try {
+      fs.writeFileSync(fd, next);
+      fs.fsyncSync(fd);
+    } finally { fs.closeSync(fd); }
+    beforeReplace?.();
+    if (sha256(fs.readFileSync(resolved)) !== expectedSha256) throw conflict();
+    fs.renameSync(temp, resolved);
+  } catch (error) { fs.rmSync(temp, { force: true }); throw error; }
   return collectWorkspaceEntry(config, agentId, requestedPath, maxFileBytes);
 }
 

@@ -50,6 +50,8 @@ test("Codex capabilities list workspace before global, honour skills.config, and
       "enabled = false",
       '[plugins."github@openai-curated"]',
       "enabled = true",
+      "[mcp_servers]",
+      'inline = { command = "node", args = ["server.js", "--key", "SECRET-INLINE"] }',
       "[mcp_servers.feishu-docs]",
       'command = "/usr/local/bin/npx"',
       'args = ["feishu-mcp", "--token", "SECRET-ARG"]',
@@ -83,6 +85,7 @@ test("Codex capabilities list workspace before global, honour skills.config, and
     ]);
     assert.deepEqual(summary(view.items, "plugin"), ["global|github@openai-curated|ok|~/.codex/config.toml"]);
     assert.deepEqual(view.items.filter((item) => item.kind === "mcp").map(({ name, description, status }) => `${name}|${description}|${status}`), [
+      "inline|stdio · node|ok",
       "feishu-docs|stdio · npx|ok",
       "remote|HTTP · https://mcp.example.com|disabled",
     ]);

@@ -35,45 +35,18 @@ export interface CapabilityHomes {
 const MAX_ENTRIES_PER_DIR = 200;
 const MAX_HEADER_BYTES = 16 * 1024;
 
-type TomlTables = Map<string, Array<Record<string, string | boolean | number>>>;
+// Bun-only runtime: the dashboard server always runs under Bun, which ships a full TOML parser.
+declare const Bun: { TOML: { parse(text: string): unknown } };
 
-/**
- * Table names are dotted keys joined with NUL so quoted keys may contain dots.
- * Reads the subset of TOML the capability view needs: `[table]` / `[[array]]` headers and
- * single-line `key = "string" | 'literal' | true | false | number` pairs. Multi-line strings,
- * inline tables and arrays are skipped, never misread as keys.
- */
-export function readTomlTables(text: string): TomlTables {
-  const tables: TomlTables = new Map([["", [{}]]]);
-  let current = tables.get("")![0];
-  let multiline: string | null = null;
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (multiline) { if (line.includes(multiline)) multiline = null; continue; }
-    if (!line || line.startsWith("#")) continue;
-    const header = /^(\[\[?)\s*([^\]]+?)\s*\]\]?\s*(#.*)?$/.exec(line);
-    if (header) {
-      // Quoted keys keep their dots: [plugins."a.b@market"] is one key under `plugins`.
-      const name = (header[2].match(/"[^"]*"|'[^']*'|[^.]+/g) || []).map((part) => part.trim().replace(/^"(.*)"$|^'(.*)'$/, "$1$2")).join("\u0000");
-      const list = tables.get(name) || [];
-      if (header[1] === "[[" || !list.length) list.push({});
-      tables.set(name, list);
-      current = list[list.length - 1];
-      continue;
-    }
-    const pair = /^([A-Za-z0-9_-]+)\s*=\s*(.*)$/.exec(line);
-    if (!pair) continue;
-    const value = pair[2].trim();
-    const opener = value.startsWith('"""') ? '"""' : value.startsWith("'''") ? "'''" : null;
-    if (opener) { if (!value.slice(3).includes(opener)) multiline = opener; continue; }
-    const basic = /^"((?:[^"\\]|\\.)*)"/.exec(value);
-    const literal = /^'([^']*)'/.exec(value);
-    if (basic) current[pair[1]] = basic[1].replace(/\\(["\\])/g, "$1").replace(/\\n/g, "\n").replace(/\\t/g, "\t");
-    else if (literal) current[pair[1]] = literal[1];
-    else if (/^(true|false)\b/.test(value)) current[pair[1]] = value.startsWith("true");
-    else if (/^-?\d+(\.\d+)?\b/.test(value)) current[pair[1]] = Number(value.match(/^-?\d+(\.\d+)?/)![0]);
-  }
-  return tables;
+/** A TOML document as a plain object; unreadable or invalid TOML reads as empty. */
+function readToml(text: string): Record<string, unknown> {
+  try { return asRecord(Bun.TOML.parse(text)); } catch { return {}; }
+}
+
+/** The sub-tables of `table`, e.g. each `[mcp_servers.<name>]` or `[mcp_servers] <name> = { … }` server. */
+function subTables(table: unknown): Array<[string, Record<string, unknown>]> {
+  return Object.entries(asRecord(table)).flatMap(([name, value]) => value && typeof value === "object" && !Array.isArray(value)
+    ? [[name, value as Record<string, unknown>]] as Array<[string, Record<string, unknown>]> : []);
 }
 
 /** Frontmatter `key: value` pairs from a Markdown file, including `|` / `>` block scalars. */
@@ -172,9 +145,8 @@ function tomlAgentsIn(dir: string, source: CapabilitySource, display: Display): 
   return listDir(dir).filter((entry) => entry.name.endsWith(".toml")).map((entry) => {
     const file = path.join(dir, entry.name);
     const text = readText(file) || "";
-    const root = readTomlTables(text).get("")![0];
-    const missing = ["name", "description"].filter((key) => typeof root[key] !== "string" || !root[key]);
-    if (!/^developer_instructions\s*=/m.test(text)) missing.push("developer_instructions");
+    const root = readToml(text);
+    const missing = ["name", "description", "developer_instructions"].filter((key) => typeof root[key] !== "string" || !root[key]);
     return {
       kind: "subagent", source, name: typeof root.name === "string" && root.name ? root.name : entry.name.replace(/\.toml$/, ""),
       description: typeof root.description === "string" ? root.description : null, location: display.path(file),
@@ -208,11 +180,12 @@ function mcpItem(name: string, server: Record<string, unknown>, source: Capabili
 
 function codexCapabilities(workspace: string, homes: CapabilityHomes, display: Display): CapabilityItem[] {
   const configFile = path.join(homes.codexHome, "config.toml");
-  const tables = readTomlTables(readText(configFile) || "");
-  const disabledSkills = new Set((tables.get("skills\u0000config") || [])
+  const codexConfig = readToml(readText(configFile) || "");
+  const skillConfigs = asRecord(codexConfig.skills).config;
+  const disabledSkills = new Set((Array.isArray(skillConfigs) ? skillConfigs.map(asRecord) : [])
     .filter((entry) => entry.enabled === false && typeof entry.path === "string")
     .map((entry) => path.resolve(String(entry.path).replace(/^~(?=\/)/, homes.home))));
-  const plugins = [...tables].filter(([name]) => /^plugins\u0000[^\u0000]+$/.test(name)).map(([name, [entry]]) => ({ id: name.slice("plugins\u0000".length), enabled: entry?.enabled !== false }));
+  const plugins = subTables(codexConfig.plugins).map(([id, entry]) => ({ id, enabled: entry.enabled !== false }));
   const pluginSkills = plugins.flatMap((plugin) => {
     const [pluginName, marketplace] = plugin.id.split("@");
     const versions = path.join(homes.codexHome, "plugins", "cache", marketplace || "", pluginName);
@@ -221,8 +194,7 @@ function codexCapabilities(workspace: string, homes: CapabilityHomes, display: D
     return skillsIn(path.join(versions, latest, "skills"), "plugin", display, disabledSkills)
       .map((item) => ({ ...item, name: `${pluginName}:${item.name}`, status: plugin.enabled ? item.status : "disabled" as const, detail: plugin.enabled ? item.detail : `插件 ${plugin.id} 已停用` }));
   });
-  const mcp = [...tables].filter(([name]) => /^mcp_servers\u0000[^\u0000]+$/.test(name))
-    .map(([name, [entry]]) => mcpItem(name.slice("mcp_servers\u0000".length), entry || {}, "global", display.path(configFile)));
+  const mcp = subTables(codexConfig.mcp_servers).map(([name, entry]) => mcpItem(name, entry, "global", display.path(configFile)));
   return [
     ...skillsIn(path.join(workspace, ".agents", "skills"), "workspace", display, disabledSkills),
     ...skillsIn(path.join(homes.home, ".agents", "skills"), "global", display, disabledSkills),
