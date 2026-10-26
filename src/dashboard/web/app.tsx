@@ -6,6 +6,7 @@ import {
 import { AGENT_TABS, createLatestResponseGate, filterAgents, parseRoute, reconcileAgentId, routeSearch, sameDraft, type AgentTab } from "./dashboard-state";
 import type { CapabilitiesResponse, CapabilityKind, ConfigAgent, ConfigResponse, DashboardAgent, InstructionFilesResponse, RuntimeModel, RuntimeReadinessView, StandingPromptResponse, StatusResponse, WorkspaceProjection } from "./types";
 import { Badge, Button, EmptyState, Sheet, cn } from "./components/ui";
+import { MENTION_POLICY_HELP, describeReplyRules, type MentionPolicy, type ReplyMode } from "./reply-rules";
 import { RUNTIME_OPTIONS } from "../../runtime/user-runtime.js";
 
 const TAB_LABELS: Record<AgentTab, string> = {
@@ -265,22 +266,22 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
     } catch (error) { setFeedback(error instanceof Error ? error.message : String(error)); }
     finally { setLoading(false); setSaving(false); }
   };
-  return <Sheet open={open} onOpenChange={requestOpenChange} title="全局设置" description="只管理所有 Agent 共同继承的默认值；高级操作仍使用 CLI。">
+  return <Sheet open={open} onOpenChange={requestOpenChange} title="全局设置" description="所有 Agent 共用的默认做法。单个 Agent 想不一样，可以在它的「回复规则」里另外设置。">
     <div className="settings-form">
-      <label><span>真人群消息默认策略</span>
+      <label><span>群消息默认策略</span>
         <select value={draft} onChange={(event) => setDraft(event.target.value as "require" | "free")} disabled={loading}>
-          <option value="require">require · 群内需要 @</option>
-          <option value="free">free · 群内无需 @</option>
+          <option value="require">需要 @ 才处理</option>
+          <option value="free">不用 @，每条都看</option>
         </select>
       </label>
-      <p className="field-help">未单独设置的 Agent 和群会使用这个值。机器人消息仍必须精确 @ 当前 Agent。</p>
+      <p className="field-help">{MENTION_POLICY_HELP[draft]}没单独设置过的 Agent 和群都按这个来。其他机器人的消息不受影响，始终要准确 @ 它。</p>
       <label><span>回复方式</span>
         <select aria-label="回复方式" value={draftReplyMode} onChange={(event) => setDraftReplyMode(event.target.value as "card" | "cli")} disabled={loading}>
-          <option value="card">流式卡片 · Larkin 把回复实时写进卡片</option>
-          <option value="cli">命令行回复 · Agent 自己用 lark-cli 发消息</option>
+          <option value="card">流式卡片 · 回复实时写进一张卡片，能看到思考和每一步操作</option>
+          <option value="cli">命令行 · Agent 想好后自己发一条普通消息</option>
         </select>
       </label>
-      <p className="field-help">对所有 Agent 生效。保存后各 Agent 会依次重新加载（保留对话上下文）；正忙的 Agent 会保持待应用。</p>
+      <p className="field-help">对所有 Agent 生效。群里没 @ 它的消息，两种方式下都用普通消息回复。保存后各 Agent 依次重新加载，对话上下文不丢；正忙的会等它空下来。</p>
       <div className="form-actions"><Button onClick={() => { setDraft(serverValue); setDraftReplyMode(serverReplyMode); }} disabled={!dirty || loading}>放弃草稿</Button><Button className="primary" onClick={save} disabled={!dirty || loading}>{saving ? "保存中…" : loading ? "读取中…" : "保存全局设置"}</Button></div>
       {feedback ? <p role="status" className="feedback">{feedback}</p> : null}
     </div>
@@ -300,17 +301,17 @@ function GroupPolicyTable({ config, onSave, disabled }: {
     return !needle || chat.chatId.toLocaleLowerCase().includes(needle) || String(chat.displayName || "未解析群名").toLocaleLowerCase().includes(needle);
   });
   return <section className="group-policy-section" aria-labelledby="group-policy-title">
-    <div className="section-heading"><div><h3 id="group-policy-title">群策略</h3><p>这里只显示为当前 Agent 单独设置过消息策略的群。</p></div><label className="table-search"><Search size={14} /><span className="sr-only">搜索群</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索群名或 chat_id" /></label></div>
+    <div className="section-heading"><div><h3 id="group-policy-title">群策略</h3><p>个别群想和上面不一样时在这里设置，优先于上面的策略。列表只显示设置过的群。</p></div><label className="table-search"><Search size={14} /><span className="sr-only">搜索群</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索群名或 chat_id" /></label></div>
     <div className="policy-table-wrap">
       <table className="policy-table"><thead><tr><th>群</th><th>消息策略</th><th>操作</th></tr></thead>
         <tbody>{groups.map((chat) => <tr key={chat.chatId}>
           <td><strong>{chat.displayName || chat.chatId}</strong>{chat.displayName ? <code>{chat.chatId}</code> : <small>群名暂时不可用</small>}</td>
-          <td><select aria-label={`${chat.displayName || chat.chatId} 消息策略`} value={chat.override} disabled={disabled} onChange={(event) => void onSave(chat.chatId, event.target.value as "require" | "free")}><option value="require">需要 @</option><option value="free">无需 @</option></select></td>
+          <td><select aria-label={`${chat.displayName || chat.chatId} 消息策略`} value={chat.override} disabled={disabled} onChange={(event) => void onSave(chat.chatId, event.target.value as "require" | "free")}><option value="require">需要 @ 才处理</option><option value="free">不用 @，每条都看</option></select></td>
           <td><Button disabled={disabled} onClick={() => void onSave(chat.chatId, "inherit")}>移除特别配置</Button></td>
         </tr>)}</tbody></table>
-      {!groups.length ? <EmptyState title={query ? "没有匹配的群" : "还没有单独配置的群"} detail="新增后，Larkin 会自动解析并缓存群名。" /> : null}
+      {!groups.length ? <EmptyState title={query ? "没有匹配的群" : "还没有单独配置的群"} detail="在下面填群的 chat_id 添加；群名会自动查出来。" /> : null}
     </div>
-    <div className="chat-add"><label><span>完整 chat_id</span><input value={newChat} onChange={(event) => setNewChat(event.target.value)} placeholder="oc_QAConfigChat1" /></label><label><span>消息策略</span><select value={newPolicy} onChange={(event) => setNewPolicy(event.target.value as typeof newPolicy)}><option value="require">需要 @</option><option value="free">无需 @</option></select></label><Button disabled={disabled || !/^oc_[A-Za-z0-9_-]+$/.test(newChat)} onClick={() => void onSave(newChat, newPolicy).then(() => setNewChat(""))}>保存群策略</Button></div>
+    <div className="chat-add"><label><span>完整 chat_id</span><input value={newChat} onChange={(event) => setNewChat(event.target.value)} placeholder="oc_QAConfigChat1" /></label><label><span>消息策略</span><select value={newPolicy} onChange={(event) => setNewPolicy(event.target.value as typeof newPolicy)}><option value="require">需要 @ 才处理</option><option value="free">不用 @，每条都看</option></select></label><Button disabled={disabled || !/^oc_[A-Za-z0-9_-]+$/.test(newChat)} onClick={() => void onSave(newChat, newPolicy).then(() => setNewChat(""))}>保存群策略</Button></div>
   </section>;
 }
 
@@ -495,16 +496,27 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
       : <Button className="primary" disabled={loading} onClick={apply}><RefreshCw size={14} /> 应用已保存配置</Button>}
   </div> : null;
   const status = feedback ? <p role="status" className="feedback">{feedback}</p> : null;
-  if (section === "reply") return <div className="configuration-page">
-    <section className="config-section"><div className="section-heading"><div><h3>私聊</h3><p>私聊里的每条消息都会回复。</p></div></div></section>
-    <section className="config-section"><div className="section-heading"><div><h3>群聊</h3><p>群里什么时候回复。其他机器人发的消息，只有准确 @ {agentId} 才会回复。</p></div></div>
+  if (section === "reply") {
+    const draftMention = String(draft.mention || "inherit");
+    const globalMention: MentionPolicy = response?.mentionPolicy ?? config.mention.effective;
+    const effectiveMention: MentionPolicy = draftMention === "inherit" ? globalMention : draftMention as MentionPolicy;
+    const replyMode: ReplyMode = response?.replyMode ?? "card";
+    return <div className="configuration-page">
+    <section className="config-section" aria-labelledby="reply-rules-title"><div className="section-heading"><div><h3 id="reply-rules-title">它会回复哪些消息</h3><p>按下面的设置，这个 Agent 收到各类消息时会这样做（群里个别设置过的群除外）。回复方式是{replyMode === "card" ? "流式卡片" : "命令行"}，在「全局设置」里改。</p></div></div>
+      <div className="rules-table-wrap"><table className="rules-table" aria-labelledby="reply-rules-title"><thead><tr><th>收到的消息</th><th>会不会处理</th><th>怎么回复</th></tr></thead>
+        <tbody>{describeReplyRules(effectiveMention, replyMode).map((rule) => <tr key={rule.message}><th scope="row">{rule.message}</th><td>{rule.handled}</td><td>{rule.reply}</td></tr>)}</tbody></table></div>
+      <p className="field-help">它开始处理一条消息时，会先给这条消息点一个「OnIt」表情。群里没 @ 它的消息不点，它自己发起的话题里除外。</p>
+    </section>
+    <section className="config-section"><div className="section-heading"><div><h3>群聊</h3><p>群里的消息要不要 @ 它才处理。</p></div></div>
       <div className="config-grid">
-        <label><span>群消息策略</span><select value={String(draft.mention || "inherit")} disabled={loading} onChange={(event) => update("mention", event.target.value)}><option value="inherit">跟随全局设置（{config.mention.effective === "free" ? "无需 @" : "需要 @"}）</option><option value="require">需要 @</option><option value="free">无需 @</option></select></label>
+        <label><span>群消息策略</span><select value={draftMention} disabled={loading} onChange={(event) => update("mention", event.target.value)}><option value="inherit">跟随全局设置（现在是{globalMention === "free" ? "不用 @" : "需要 @"}）</option><option value="require">需要 @ 才处理</option><option value="free">不用 @，每条都看</option></select></label>
       </div>
+      <p className="field-help">{MENTION_POLICY_HELP[effectiveMention]}</p>
       {actions}{status}
     </section>
     <GroupPolicyTable config={config} onSave={saveChat} disabled={loading} />
   </div>;
+  }
   if (section === "advanced") return <div className="configuration-page">
     <section className="config-section">
       <div className="audit-controls" aria-labelledby="agent-sandbox-title">
@@ -533,11 +545,24 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
     </section>
     <section className="config-section">
       <div className="audit-controls" aria-labelledby="agent-inbox-audit-title">
-        <div className="audit-heading"><div><h3 id="agent-inbox-audit-title">Inbox 巡检</h3><p>Agent 在群里被叫到之后（有人 @ 它，或这个群设成了不用 @），过一阵子回到那个群或话题再看一遍：当时有没有没回上的，后来有没有人接着找它。该回的补上，没事就不出声。</p></div><label className="audit-switch"><input aria-label="Inbox 巡检开关" type="checkbox" checked={auditEnabled} disabled={loading} onChange={(event) => update("auditEnabled", event.target.checked)} /><span aria-hidden="true" /><b>{auditEnabled ? "已开启" : "已关闭"}</b></label></div>
+        <div className="audit-heading"><div><h3 id="agent-inbox-audit-title">Inbox 巡检</h3><p>防止群里的消息漏回。有人在群里找过它之后，它会隔一段时间回到那个群或话题看一眼，把漏掉的补上。</p></div><label className="audit-switch"><input aria-label="Inbox 巡检开关" type="checkbox" checked={auditEnabled} disabled={loading} onChange={(event) => update("auditEnabled", event.target.checked)} /><span aria-hidden="true" /><b>{auditEnabled ? "已开启" : "已关闭"}</b></label></div>
         <div className="config-grid audit-grid">
           <label><span>巡检间隔（分钟）</span><input aria-label="巡检间隔（分钟）" type="number" min={MIN_AUDIT_GAP_MINUTES} max={MAX_AUDIT_GAP_MINUTES} step="any" inputMode="decimal" value={auditGapMinutes} disabled={loading} onChange={(event) => update("auditGapMinutes", event.target.value)} /></label>
         </div>
-        <p className="field-help">只看叫过它的群和话题；从没叫过它的群、私聊都不看。这段时间没人叫它就跳过，不花额度。间隔越短补得越快，额度也花得越多。</p>
+        <p className="audit-now" role="note">{auditEnabled
+          ? `现在：有人在群里找过它之后，约 ${auditGapMinutes || "?"} 分钟内回头检查一次。没人找它就不检查，不花额度。`
+          : "现在：已关闭。群里没回上的消息不会被补上。"}</p>
+        {draft.sandbox === "workspace-write" && auditEnabled ? <p className="field-help warning-text">这个 Agent 的沙箱是「只改自己的工作区」，巡检做完后标记不了完成，同一个群会被反复检查。</p> : null}
+        <details className="sandbox-scope">
+          <summary>巡检具体怎么做</summary>
+          <ol>
+            <li>有人在群里叫到它（@ 它，或在不用 @ 的群里说话），就记下这个群或话题。私聊和没叫过它的群不记。</li>
+            <li>每到间隔，如果有记下的群或话题，就开一轮巡检；没有就跳过。</li>
+            <li>每个群或话题读最近 20 条消息，找两类问题：有人问了它却没回；它答应会发的结果或要 @ 的人，最后没发出去。</li>
+            <li>找到就补发一条回复；没找到就不出声。处理完这个群或话题就不再记着，直到下次有人找它。</li>
+          </ol>
+          <p>每开一轮巡检就是一次模型调用。群里找它越频繁、间隔越短，花的额度越多。</p>
+        </details>
       </div>
       {sandboxDirty ? null : <>{actions}{status}</>}
     </section>

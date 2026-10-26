@@ -280,6 +280,16 @@ button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity:
 .sandbox-scope p { margin: 0; }
 .sandbox-scope ul { margin: 4px 0; padding-left: 18px; list-style: disc; }
 .sandbox-scope li { margin: 2px 0; }
+.sandbox-scope ol { margin: 4px 0 6px; padding-left: 18px; list-style: decimal; }
+.audit-now { margin: 0; border-left: 2px solid var(--accent); padding: 6px 10px; color: var(--ink); font-size: 12px; line-height: 1.55; }
+.warning-text { color: var(--warning); }
+.rules-table-wrap { width: 100%; margin-top: 12px; overflow-x: auto; }
+.rules-table { width: 100%; border-collapse: collapse; font-size: 12px; line-height: 1.55; }
+.rules-table thead th { color: var(--faint); text-align: left; font-size: 9.5px; font-weight: 600; letter-spacing: .06em; }
+.rules-table th, .rules-table td { padding: 9px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.rules-table tbody th { width: 26%; color: var(--ink); font-weight: 600; }
+.rules-table tbody td:nth-child(2) { width: 24%; }
+.rules-table td { color: var(--subtle); }
 @media (max-width: 720px) { .sandbox-options { grid-template-columns: 1fr; } }
 .compact-sidebar { padding: 16px 0; }
 @keyframes fade-in { from { opacity: 0; } }
@@ -329,6 +339,11 @@ button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity:
   .policy-table td:nth-child(2)::before { content: "消息策略"; }
   .policy-table td:nth-child(3)::before { content: "操作"; }
   .chat-add { grid-template-columns: 1fr; }
+  .rules-table, .rules-table tbody, .rules-table tr { display: block; }
+  .rules-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+  .rules-table tr { border-bottom: 1px solid var(--line); padding: 10px 0; }
+  .rules-table tbody th, .rules-table td, .rules-table tbody td:nth-child(2) { display: block; width: auto; padding: 0; border: 0; }
+  .rules-table td:nth-child(2) { color: var(--ink); }
   .workspace-shell { height: auto; min-height: 100vh; display: block; overflow: visible; }
   .workspace-browser, .runtime-details > .workspace-browser { height: auto; min-height: 0; grid-template-columns: 1fr; overflow: hidden; }
   .workspace-side { height: min(300px, 42dvh); border-right: 0; border-bottom: 1px solid var(--line); }

@@ -152,6 +152,30 @@ describe("Agent-centric dashboard workbench", () => {
     expect(screen.getByText("没有匹配的群")).toBeVisible();
   });
 
+  it("spells out which messages the Agent answers and follows the group policy draft", async () => {
+    window.history.replaceState(null, "", "/?agent=cli_AgentB2&tab=reply");
+    render(<App />);
+    const rules = await screen.findByRole("table", { name: "它会回复哪些消息" });
+    const unmentioned = () => within(rules).getByRole("row", { name: /群里没 @ 它/ });
+    expect(within(rules).getByRole("row", { name: /私聊/ })).toHaveTextContent("每条都处理");
+    expect(within(rules).getByRole("row", { name: /其他机器人/ })).toHaveTextContent("@所有人 不算");
+    expect(unmentioned()).toHaveTextContent("不处理");
+    await userEvent.selectOptions(screen.getByLabelText("群消息策略"), "free");
+    expect(unmentioned()).toHaveTextContent("由它判断要不要回");
+    expect(unmentioned()).toHaveTextContent("不出卡片");
+  });
+
+  it("says what Inbox audit does now and how", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { level: 1, name: "Builder" });
+    await userEvent.click(screen.getByRole("tab", { name: "高级" }));
+    const toggle = await screen.findByLabelText("Inbox 巡检开关");
+    expect(screen.getByRole("note")).toHaveTextContent("已关闭");
+    await userEvent.click(toggle);
+    expect(screen.getByRole("note")).toHaveTextContent(/约 \d+ 分钟内回头检查一次/);
+    expect(screen.getByText("巡检具体怎么做")).toBeVisible();
+  });
+
   it("looks up group names only for the reply tab, not for the other tabs or global settings", async () => {
     window.history.replaceState(null, "", "/?agent=cli_AgentB2&tab=reply");
     render(<App />);
@@ -366,10 +390,10 @@ describe("Agent-centric dashboard workbench", () => {
     await screen.findByRole("heading", { level: 1, name: "Builder" });
     await userEvent.click(screen.getByRole("button", { name: "全局设置" }));
     const dialog = await screen.findByRole("dialog");
-    await userEvent.selectOptions(within(dialog).getByLabelText("真人群消息默认策略"), "require");
+    await userEvent.selectOptions(within(dialog).getByLabelText("群消息默认策略"), "require");
     await userEvent.click(within(dialog).getByRole("button", { name: "保存全局设置" }));
     await waitFor(() => expect(within(dialog).getByRole("status")).toHaveTextContent("这个页面已过期，刷新页面后再操作"));
-    expect(within(dialog).getByLabelText("真人群消息默认策略")).toHaveValue("require");
+    expect(within(dialog).getByLabelText("群消息默认策略")).toHaveValue("require");
   });
 
   it("filters the sidebar and preserves last-known status on polling errors", async () => {
