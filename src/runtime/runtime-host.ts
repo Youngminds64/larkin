@@ -1260,6 +1260,9 @@ export function createRuntimeHost(options: {
       agent.config.sessionId = event.sessionId;
       emit({ type: "session", agentId: agent.config.agentId, runtime: agent.adapter.id, sessionId: event.sessionId, launchId: agent.launchId,
         ...(event.model ? { model: event.model } : {}), ...(event.reasoningEffort ? { reasoningEffort: event.reasoningEffort } : {}) });
+      // A runtime can defer input until its session is ready (Codex before thread/start or thread/resume returns);
+      // nothing else would resubmit that delivery, so retry pending work once the session reports in.
+      void retryPending(agent);
     } else if (event.type === "turn-start") {
       // Clear a source left by a crashed/aborted prior turn before a new turn
       // can execute a direct task without an Inbox poll.
