@@ -36,6 +36,7 @@ jobs:
       source_sha: ${{ steps.intent.outputs.source_sha }}
       should_create_tag: ${{ steps.intent.outputs.should_create_tag }}
       should_publish: ${{ steps.intent.outputs.should_publish }}
+      candidate_bun_version: ${{ steps.candidate-bun.outputs.version }}
     steps:
       - name: Check out release workflow tooling
         uses: actions/checkout@v7
@@ -53,6 +54,19 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # The candidate is installed, tested, built and smoked with the Bun its own package.json
+      # pins, so recovering an older candidate does not trip that source's strict version check.
+      - name: Read the candidate's pinned Bun version
+        id: candidate-bun
+        run: |
+          version="$(jq -r '.packageManager // empty' release-source/package.json)"
+          version="${version#bun@}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Refusing to release: release source package.json does not pin packageManager bun@X.Y.Z" >&2
+            exit 1
+          }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Require default-branch workflow code for recovery
         if: github.event_name == 'workflow_dispatch'
         env:
@@ -64,7 +78,7 @@ jobs:
             exit 1
           }
 
-      - name: Set up pinned Bun
+      - name: Set up release tooling Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
@@ -94,10 +108,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up pinned Bun
+      - name: Set up the candidate's pinned Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.4
+          bun-version: ${{ needs.resolve-release.outputs.candidate_bun_version }}
 
       - name: Verify tagged commit belongs to main
         env:
@@ -218,7 +232,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up pinned Bun
+      - name: Set up release tooling Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
@@ -279,10 +293,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up pinned Bun
+      - name: Set up the candidate's pinned Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.4
+          bun-version: ${{ needs.resolve-release.outputs.candidate_bun_version }}
 
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
@@ -348,10 +362,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up pinned Bun
+      - name: Set up the candidate's pinned Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.4
+          bun-version: ${{ needs.resolve-release.outputs.candidate_bun_version }}
 
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
@@ -445,10 +459,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up pinned Bun
+      - name: Set up the candidate's pinned Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.4
+          bun-version: ${{ needs.resolve-release.outputs.candidate_bun_version }}
 
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
@@ -519,10 +533,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up pinned Bun
+      - name: Set up the candidate's pinned Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.4
+          bun-version: ${{ needs.resolve-release.outputs.candidate_bun_version }}
 
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
