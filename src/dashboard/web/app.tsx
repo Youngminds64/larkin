@@ -16,15 +16,22 @@ const bootstrap = window.__LARKIN_DASHBOARD__ || {
   packageVersion: "dev", dashboardVersion: "dev", buildFingerprint: "", csrfCapability: "",
 };
 
+const UNREACHABLE = "连不上 larkin：服务可能已停止或正在重启。确认 larkin 在运行后刷新页面。";
+
 class JsonResponseError extends Error {
   constructor(message: string, readonly body: { error?: string; readiness?: RuntimeReadinessView }) { super(message); }
 }
 
 async function jsonFetch<T>(url: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, { cache: "no-store", ...init });
+  let response: Response;
+  try { response = await fetch(url, { cache: "no-store", ...init }); }
+  catch (error) {
+    if (init.signal?.aborted) throw error;
+    throw new Error(UNREACHABLE);
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { error?: string; readiness?: RuntimeReadinessView };
-    throw new JsonResponseError(body.error || `HTTP ${response.status}`, body);
+    throw new JsonResponseError(body.error || `请求失败（HTTP ${response.status}）`, body);
   }
   return response.json() as Promise<T>;
 }
@@ -209,6 +216,7 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
   const [draftReplyMode, setDraftReplyMode] = useState<"card" | "cli">("cli");
   const [agentIds, setAgentIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const dirty = draft !== serverValue || draftReplyMode !== serverReplyMode
     || draftAudit.enabled !== serverAudit.enabled || draftAuditGapMinutes !== formatAuditGapMinutes(serverAudit.intervalMs);
@@ -216,7 +224,7 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
     if (!open) return;
     const controller = new AbortController();
     setLoading(true);
-    void privateGet<ConfigResponse>("/api/config", { signal: controller.signal }).then((value) => {
+    void privateGet<ConfigResponse>("/api/config?chats=0", { signal: controller.signal }).then((value) => {
       setServerValue(value.mentionPolicy);
       setDraft(value.mentionPolicy);
       setServerAudit(value.inboxAudit);
@@ -243,6 +251,7 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
     }
     const intervalMs = editedIntervalMs ?? serverAudit.intervalMs;
     setLoading(true);
+    setSaving(true);
     try {
       let result: { revision: string; applyState: string } | null = null;
       if (draft !== serverValue) result = await mutateConfig({ operation: "set-global-mention", value: draft });
@@ -278,7 +287,7 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
         : result ? `已保存 · ${replyModeChanged ? "applied" : result.applyState} · ${result.revision.slice(0, 20)}…` : "没有需要保存的修改");
       onSaved();
     } catch (error) { setFeedback(error instanceof Error ? error.message : String(error)); }
-    finally { setLoading(false); }
+    finally { setLoading(false); setSaving(false); }
   };
   return <Sheet open={open} onOpenChange={requestOpenChange} title="全局设置" description="只管理所有 Agent 共同继承的默认值；高级操作仍使用 CLI。">
     <div className="settings-form">
@@ -301,7 +310,7 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
         <label><span>巡检间隔（分钟）</span><input aria-label="全局巡检间隔（分钟）" type="number" min={MIN_AUDIT_GAP_MINUTES} max={MAX_AUDIT_GAP_MINUTES} step="any" inputMode="decimal" value={draftAuditGapMinutes} disabled={loading} onChange={(event) => setDraftAuditGapMinutes(event.target.value)} /></label>
         <p className="field-help">可在关闭时预先调整；保存间隔本身不会开启巡检。</p>
       </div>
-      <div className="form-actions"><Button onClick={() => { setDraft(serverValue); setDraftReplyMode(serverReplyMode); setDraftAudit(serverAudit); setDraftAuditGapMinutes(formatAuditGapMinutes(serverAudit.intervalMs)); }} disabled={!dirty || loading}>放弃草稿</Button><Button className="primary" onClick={save} disabled={!dirty || loading}>{loading ? "保存中…" : "保存全局设置"}</Button></div>
+      <div className="form-actions"><Button onClick={() => { setDraft(serverValue); setDraftReplyMode(serverReplyMode); setDraftAudit(serverAudit); setDraftAuditGapMinutes(formatAuditGapMinutes(serverAudit.intervalMs)); }} disabled={!dirty || loading}>放弃草稿</Button><Button className="primary" onClick={save} disabled={!dirty || loading}>{saving ? "保存中…" : loading ? "读取中…" : "保存全局设置"}</Button></div>
       {feedback ? <p role="status" className="feedback">{feedback}</p> : null}
     </div>
   </Sheet>;
