@@ -221,10 +221,6 @@ function workflowStepRun(file, stepId) {
 
 // release.yml and npm-publish.yml run these selectors on ubuntu-24.04.
 // Windows has no /bin/bash. Git Bash is not that shell and does not provide the workflow jq.
-function workflowShellExecutionSupported(platform = process.platform) {
-  return platform === "linux" || platform === "darwin";
-}
-
 function workflowShellDetail(result) {
   const error = result.error ? `${result.error.code ?? "ERR"}: ${result.error.message}` : "none";
   return `status=${result.status} signal=${result.signal ?? "none"} error=${error}\nstderr:\n${result.stderr ?? ""}\nstdout:\n${result.stdout ?? ""}`;
@@ -236,9 +232,6 @@ test("release and npm workflows encode the original packageManager pin in jq", (
     [".github/workflows/release.yml", "candidate-bun"],
     [".github/workflows/npm-publish.yml", "release-bun"],
   ];
-  assert.equal(workflowShellExecutionSupported("win32"), false, "Windows must not execute the Ubuntu packageManager shell");
-  assert.equal(workflowShellExecutionSupported("linux"), true);
-  assert.equal(workflowShellExecutionSupported("darwin"), true);
   for (const [file, stepId] of steps) {
     const script = workflowStepRun(file, stepId);
     assert.ok(script.includes("jq -er "), `${file} validates the original JSON string before shell normalization`);
@@ -248,7 +241,7 @@ test("release and npm workflows encode the original packageManager pin in jq", (
   }
 });
 
-test.skipIf(!workflowShellExecutionSupported())("release and npm workflows accept only an exact bun@X.Y.Z pin before stripping it (Linux and macOS only; Windows has no Ubuntu bash or workflow jq)", () => {
+test.skipIf(!["linux", "darwin"].includes(process.platform))("release and npm workflows accept only an exact bun@X.Y.Z pin before stripping it (Linux and macOS only; Windows has no Ubuntu bash or workflow jq)", () => {
   const steps = [
     [".github/workflows/release.yml", "candidate-bun", "release-source/package.json"],
     [".github/workflows/npm-publish.yml", "release-bun", "package.json"],
