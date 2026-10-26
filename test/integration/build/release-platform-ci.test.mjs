@@ -126,7 +126,10 @@ test("package version and explicit tag publication share one immutable combined-
   assert.equal(workflow.match(/bun "\$GITHUB_WORKSPACE\/release-tooling\/scripts\/release\/intent\.mjs" assert-draft/g)?.length, 2);
   assert.match(workflow, /source_sha: \$\{\{ steps\.intent\.outputs\.source_sha \}\}/);
   // Recovering an older candidate must not install today's Bun into source that pins another one.
-  assert.match(workflow, /jq -r '\.packageManager \/\/ empty' release-source\/package\.json/);
+  assert.ok(
+    workflow.includes(`jq -er '.packageManager | select(type == "string" and test("^bun@[0-9]+\\\\.[0-9]+\\\\.[0-9]+\\\\z")) | sub("^bun@"; "")' release-source/package.json`),
+    "candidate Bun must be taken from the original packageManager string",
+  );
   assert.equal(workflow.match(/bun-version: 1\.4\.4/g)?.length, 2, "only resolve-release and prepare-release run tooling-only Bun");
   assert.equal(workflow.match(/bun-version: \$\{\{ needs\.resolve-release\.outputs\.candidate_bun_version \}\}/g)?.length, 5);
   assert.ok((workflow.match(/ref: \$\{\{ needs\.resolve-release\.outputs\.source_sha \}\}/g) ?? []).length >= 4);
@@ -217,8 +220,7 @@ function workflowStepRun(file, stepId) {
 }
 
 test("release and npm workflows accept only an exact bun@X.Y.Z pin before stripping it", () => {
-  const fullPin = '[[ "$version" =~ ^bun@[0-9]+\\.[0-9]+\\.[0-9]+$ ]]';
-  const strip = 'version="${version#bun@}"';
+  const originalPin = 'select(type == "string" and test("^bun@[0-9]+\\\\.[0-9]+\\\\.[0-9]+\\\\z")) | sub("^bun@"; "")';
   const steps = [
     [".github/workflows/release.yml", "candidate-bun", "release-source/package.json"],
     [".github/workflows/npm-publish.yml", "release-bun", "package.json"],
@@ -228,15 +230,20 @@ test("release and npm workflows accept only an exact bun@X.Y.Z pin before stripp
     ["bun144", { packageManager: "bun@1.4.4" }, "1.4.4"],
     ["missing", {}, null],
     ["null", { packageManager: null }, null],
+    ["bool", { packageManager: false }, null],
     ["empty", { packageManager: "" }, null],
     ["partial", { packageManager: "bun@1.4" }, null],
     ["other", { packageManager: "npm@1.3.14" }, null],
     ["bare", { packageManager: "1.3.14" }, null],
     ["injection", { packageManager: "bun@1.3.14; touch injected" }, null],
     ["substitution", { packageManager: "bun@$(touch injected)" }, null],
+    ["trailing-lf", { packageManager: "bun@1.3.14\n" }, null],
+    ["multi-lf", { packageManager: "bun@1.3.14\n\n" }, null],
+    ["crlf", { packageManager: "bun@1.3.14\r\n" }, null],
     ["newline", { packageManager: "bun@1.3.14\nversion=1.4.4" }, null],
     ["number", { packageManager: 134 }, null],
     ["array", { packageManager: ["bun@1.3.14"] }, null],
+    ["object", { packageManager: { name: "bun", version: "1.3.14" } }, null],
     ["malformed", "{", null],
     ["no-file", undefined, null],
   ];
@@ -244,8 +251,10 @@ test("release and npm workflows accept only an exact bun@X.Y.Z pin before stripp
   try {
     for (const [file, stepId, packagePath] of steps) {
       const script = workflowStepRun(file, stepId);
-      assert.ok(script.includes(fullPin), file);
-      assert.ok(script.indexOf(fullPin) < script.indexOf(strip), `${file} checks the full pin before stripping`);
+      assert.ok(script.includes("jq -er "), `${file} validates the original JSON string before shell normalization`);
+      assert.ok(script.includes(originalPin), file);
+      assert.equal(script.includes("=~"), false, `${file} must not validate the pin after command substitution`);
+      assert.equal(script.includes(".packageManager // empty"), false, `${file} must not read an unvalidated raw string`);
       for (const [label, data, expected] of cases) {
         const dir = path.join(root, stepId, label);
         fs.mkdirSync(path.dirname(path.join(dir, packagePath)), { recursive: true });

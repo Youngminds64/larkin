@@ -59,12 +59,10 @@ jobs:
       - name: Read the candidate's pinned Bun version
         id: candidate-bun
         run: |
-          version="$(jq -r '.packageManager // empty' release-source/package.json)"
-          [[ "$version" =~ ^bun@[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+          version="$(jq -er '.packageManager | select(type == "string" and test("^bun@[0-9]+\\.[0-9]+\\.[0-9]+\\z")) | sub("^bun@"; "")' release-source/package.json)" || {
             echo "Refusing to release: release source package.json does not pin packageManager bun@X.Y.Z" >&2
             exit 1
           }
-          version="${version#bun@}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Require default-branch workflow code for recovery
