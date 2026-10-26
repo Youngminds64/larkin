@@ -667,16 +667,16 @@ test("a request from a page that predates the dashboard is told to reload, not g
 
   const read = await get(controller, `/api/config?agent=${APP}`, { host: "localhost:9996", "x-larkin-csrf": "from-before-restart" });
   assert.equal(read.status, 403);
-  assert.equal(read.body.code, "stale_page");
+  assert.match(read.body.error, /刷新页面/);
   const write = await patch(controller, { operation: "set-global-mention", value: "free" });
   assert.equal(write.status, 403, "the patch helper presents the old capability");
-  assert.equal(write.body.code, "stale_page");
   assert.match(write.body.error, /刷新页面/);
 
-  assert.equal(dashboardError(new Error("unsupported operation"), "保存失败").body.code, "outdated_page");
+  assert.deepEqual(dashboardError(new Error("unsupported operation"), "保存失败"),
+    { status: 400, body: { error: "页面和正在运行的 larkin 版本不一致。刷新页面后再操作。" } });
   assert.equal(dashboardError(new Error("request too large"), "保存失败").status, 413);
   assert.deepEqual(dashboardError(new Error("没找到配置 /x/config.json，先跑 larkin setup"), "保存失败").body,
-    { error: "没找到配置 /x/config.json，先跑 larkin setup", code: "rejected" }, "a message written for people is shown as is");
+    { error: "没找到配置 /x/config.json，先跑 larkin setup" }, "a message written for people is shown as is");
   assert.deepEqual(dashboardError(new Error("EACCES: permission denied"), "保存失败").body,
-    { error: "保存失败：EACCES: permission denied", code: "failed" }, "an unexpected failure keeps its reason");
+    { error: "保存失败：EACCES: permission denied" }, "an unexpected failure keeps its reason");
 });

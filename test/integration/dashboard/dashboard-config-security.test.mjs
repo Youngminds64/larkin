@@ -72,7 +72,7 @@ test("dashboard config API is sanitized, same-origin/CSRF protected, bounded, an
     ];
     // Forbidden callers get 403, an oversized body 413, a malformed request 400; a wrong capability is a stale page.
     assert.deepEqual(rejected.map((response) => response.status), [403, 403, 400, 403, 400, 413]);
-    assert.equal((await rejected[3].json()).code, "stale_page");
+    assert.match((await rejected[3].json()).error, /刷新页面/);
     assert.equal(fs.readFileSync(path.join(root, "config.json"), "utf8"), before);
 
     const accepted = await fetch(`${base}/api/config`, { method: "PATCH", headers: { "Content-Type": "application/json", Origin: base, "X-Larkin-CSRF": csrf }, body: raw });
@@ -117,7 +117,7 @@ test("dashboard config API is sanitized, same-origin/CSRF protected, bounded, an
     const applyBadCsrf = await fetch(`${base}/api/config/apply`, { method: "POST", headers: { "Content-Type": "application/json", Origin: base, "X-Larkin-CSRF": "bad" }, body: JSON.stringify({ agentId: APP }) });
     const applyOffline = await fetch(`${base}/api/config/apply`, { method: "POST", headers: { "Content-Type": "application/json", Origin: base, "X-Larkin-CSRF": csrf }, body: JSON.stringify({ agentId: APP }) });
     assert.deepEqual([applyMissingOrigin.status, applyBadCsrf.status, applyOffline.status], [403, 403, 409]);
-    assert.equal((await applyOffline.json()).code, "apply_failed");
+    assert.match((await applyOffline.json()).error, /daemon|配置已保存.*应用失败/);
     const pendingView = await fetch(`${base}/api/config`, { headers: privateHeaders }).then((response) => response.json());
     assert.equal(pendingView.agents[0].apply.applyState, "pending");
   } finally {

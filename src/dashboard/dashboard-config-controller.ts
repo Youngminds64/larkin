@@ -379,25 +379,25 @@ function assertWriteRequest(req: http.IncomingMessage, csrfCapability: string): 
 }
 
 /**
- * Map a failed dashboard request to a status, a stable `code` the page can act on, and a message it shows as is.
+ * Map a failed dashboard request to a status and a message the page shows as is.
  * The raw reason goes to the local log. A wrong capability means the page was opened before this dashboard
  * (re)started; an unknown operation or field means the page is from another build; both are fixed by a reload.
  */
-export function dashboardError(error: unknown, fallback: string): { status: number; body: { error: string; code: string } } {
+export function dashboardError(error: unknown, fallback: string): { status: number; body: { error: string } } {
   const message = error instanceof Error ? error.message : String(error);
   console.warn(`[dashboard] ${fallback}: ${message}`);
-  const reply = (status: number, code: string, text: string) => ({ status, body: { error: text, code } });
-  if (/^(?:csrf|capability) rejected$/.test(message)) return reply(403, "stale_page", "这个页面已过期，刷新页面后再操作。");
-  if (/^(?:invalid host|same-origin required)$/.test(message)) return reply(403, "forbidden", "请在本机用 http://localhost 打开 dashboard。");
-  if (message === "request too large") return reply(413, "too_large", "内容太大，无法保存。");
-  if (message === "unknown agent") return reply(404, "unknown_agent", "这个 Agent 已不存在，刷新页面看看。");
-  if (/not in current (?:runtime|model) directory$/.test(message)) return reply(400, "stale_choice", "所选的模型或推理强度已不在可用列表里，重新选择后再保存。");
+  const reply = (status: number, text: string) => ({ status, body: { error: text } });
+  if (/^(?:csrf|capability) rejected$/.test(message)) return reply(403, "这个页面已过期，刷新页面后再操作。");
+  if (/^(?:invalid host|same-origin required)$/.test(message)) return reply(403, "请在本机用 http://localhost 打开 dashboard。");
+  if (message === "request too large") return reply(413, "内容太大，无法保存。");
+  if (message === "unknown agent") return reply(404, "这个 Agent 已不存在，刷新页面看看。");
+  if (/not in current (?:runtime|model) directory$/.test(message)) return reply(400, "所选的模型或推理强度已不在可用列表里，重新选择后再保存。");
   if (/^(?:unsupported operation|invalid |JSON object required|application\/json required)/.test(message) || error instanceof SyntaxError) {
-    return reply(400, "outdated_page", "页面和正在运行的 larkin 版本不一致。刷新页面后再操作。");
+    return reply(400, "页面和正在运行的 larkin 版本不一致。刷新页面后再操作。");
   }
   // Messages written for people (Chinese) are shown as is; anything else keeps the fallback plus its reason.
-  if (/[\u4e00-\u9fff]/.test(message)) return reply(400, "rejected", message);
-  return reply(500, "failed", `${fallback}：${message.slice(0, 200)}`);
+  if (/[\u4e00-\u9fff]/.test(message)) return reply(400, message);
+  return reply(500, `${fallback}：${message.slice(0, 200)}`);
 }
 
 function sendError(res: http.ServerResponse, error: unknown, fallback: string, extra: Record<string, unknown> = {}): void {
@@ -593,7 +593,7 @@ export function createDashboardConfigController({
           const result = mutateConfig(env, mutation, { kind: "user" });
           json(res, 200, { ok: true, revision: result.revision, persisted: true, applyState: result.applyState, changedScope: result.changedScope });
         } catch (error) {
-          if (error instanceof RuntimePrerequisiteError) json(res, 400, { error: error.message, code: "runtime_unready", readiness: error.readiness });
+          if (error instanceof RuntimePrerequisiteError) json(res, 400, { error: error.message, readiness: error.readiness });
           else sendError(res, error, "保存失败");
         }
         return true;
@@ -609,7 +609,7 @@ export function createDashboardConfigController({
           const expectedSignature = runtimeConfigSignature(config, agentId);
           const result = await requestUpsert({ larkinHome: config.larkinHome, agentId });
           if (!result.ok) {
-            json(res, 409, { error: result.error || "配置已保存，但应用失败", code: "apply_failed",
+            json(res, 409, { error: result.error || "配置已保存，但应用失败",
               ...(result.readiness ? { readiness: result.readiness } : {}) });
             return true;
           }
@@ -618,7 +618,7 @@ export function createDashboardConfigController({
         } catch (error) {
           const { status, body } = dashboardError(error, "配置已保存，但应用失败");
           // An unreachable runtime is a failed apply of a saved config, not a server error.
-          json(res, status === 500 ? 409 : status, status === 500 ? { ...body, code: "apply_failed" } : body);
+          json(res, status === 500 ? 409 : status, body);
         }
         return true;
       }
