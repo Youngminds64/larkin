@@ -23,7 +23,7 @@ test("PR and main CI retain Linux source checks and add a blocking native Window
   assert.equal(workflow.match(/runs-on: ubuntu-24\.04/g)?.length, 2);
   assert.equal(workflow.match(/runs-on: windows-latest/g)?.length, 1);
   assert.deepEqual(JSON.parse(read("package.json")).trustedDependencies ?? [], []);
-  assert.equal(workflow.match(/bun-version: 1\.3\.14/g)?.length, 3);
+  assert.equal(workflow.match(/bun-version: 1\.4\.4/g)?.length, 3);
   assert.doesNotMatch(workflow, /actions\/setup-go|go-version:/);
   assert.equal(workflow.match(/bun install --frozen-lockfile/g)?.length, 3);
   assert.match(workflow, /bun run licenses:check/);
@@ -123,6 +123,10 @@ test("package version and explicit tag publication share one immutable combined-
   assert.match(workflow, /bun "\$GITHUB_WORKSPACE\/release-tooling\/scripts\/release\/intent\.mjs" prepare/);
   assert.equal(workflow.match(/bun "\$GITHUB_WORKSPACE\/release-tooling\/scripts\/release\/intent\.mjs" assert-draft/g)?.length, 2);
   assert.match(workflow, /source_sha: \$\{\{ steps\.intent\.outputs\.source_sha \}\}/);
+  // Recovering an older candidate must not install today's Bun into source that pins another one.
+  assert.match(workflow, /jq -r '\.packageManager \/\/ empty' release-source\/package\.json/);
+  assert.equal(workflow.match(/bun-version: 1\.4\.4/g)?.length, 2, "only resolve-release and prepare-release run tooling-only Bun");
+  assert.equal(workflow.match(/bun-version: \$\{\{ needs\.resolve-release\.outputs\.candidate_bun_version \}\}/g)?.length, 5);
   assert.ok((workflow.match(/ref: \$\{\{ needs\.resolve-release\.outputs\.source_sha \}\}/g) ?? []).length >= 4);
   assert.match(workflow, /RELEASE_TAG: \$\{\{ needs\.resolve-release\.outputs\.release_tag \}\}/);
   assert.match(workflow, /should_publish: \$\{\{ steps\.prepare\.outputs\.should_publish \}\}/);
