@@ -652,6 +652,80 @@ test("Inbox contender retries when the lock directory disappears after guarded r
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+const sandboxedInspect = () => ({ ok: false, reason: "ps denied by sandbox" });
+
+test("an Agent that cannot run ps still takes the Inbox lock, recording no start token", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-state-sandbox-lock-"));
+  try {
+    const { createAgentStateStore } = await import(moduleUrl);
+    const store = createAgentStateStore(root, "cli_stateSandboxLockA1", { inspectProcess: sandboxedInspect });
+    store.writeJson("status", { prepared: true });
+    let owner = null;
+    store.withInboxTransaction(() => {
+      owner = JSON.parse(fs.readFileSync(path.join(`${store.paths.inbox}.lock`, "owner.json"), "utf8"));
+    });
+    assert.deepEqual(Object.keys(owner).sort(), ["nonce", "pid", "version"]);
+    assert.equal(owner.pid, process.pid);
+    store.appendNdjson("inbox", { message_id: "om_sandbox", chat_id: "oc_lock" });
+    assert.deepEqual(store.readNdjson("inbox").map((row) => row.message_id), ["om_sandbox"]);
+    assert.equal(fs.existsSync(`${store.paths.inbox}.lock`), false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a paused live owner without a start token keeps the Inbox lock, so its write-back cannot drop a later append", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-state-paused-owner-"));
+  const agentId = "cli_statePausedOwnerA1";
+  const ready = path.join(root, "owner-paused");
+  const resume = path.join(root, "owner-resume");
+  const script = path.join(root, "paused-owner.mjs");
+  fs.writeFileSync(script, `
+    import fs from "node:fs";
+    const { createAgentStateStore } = await import(${JSON.stringify(moduleUrl)});
+    const store = createAgentStateStore(${JSON.stringify(root)}, ${JSON.stringify(agentId)}, {
+      inspectProcess: () => ({ ok: false, reason: "ps denied by sandbox" }),
+    });
+    const result = store.pollInbox({ afterRead() {
+      fs.writeFileSync(${JSON.stringify(ready)}, "");
+      while (!fs.existsSync(${JSON.stringify(resume)})) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    } });
+    process.stdout.write(JSON.stringify(result.envelopes.map((row) => row.message_id)));
+  `);
+  let child = null;
+  try {
+    const { createAgentStateStore } = await import(moduleUrl);
+    const store = createAgentStateStore(root, agentId);
+    store.writeJson("status", { prepared: true });
+    store.appendNdjson("inbox", { message_id: "om_before_pause", chat_id: "oc_lock" });
+    child = spawn(process.execPath, [script], { stdio: ["ignore", "pipe", "inherit"] });
+    let stdout = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    const deadline = Date.now() + 10_000;
+    while (!fs.existsSync(ready)) {
+      assert.ok(Date.now() < deadline, "the owner never paused inside its Inbox poll");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    // The owner has held the lock far longer than any Inbox operation takes, and is still alive.
+    const lockDir = `${store.paths.inbox}.lock`;
+    const old = new Date(Date.now() - 10 * 60_000);
+    fs.utimesSync(lockDir, old, old);
+    assert.throws(() => store.appendNdjson("inbox", { message_id: "om_during_pause", chat_id: "oc_lock" }), /锁等待超时/);
+    assert.equal(fs.existsSync(lockDir), true, "a live owner whose identity cannot be confirmed must keep its lock");
+
+    fs.writeFileSync(resume, "");
+    const [code] = await once(child, "exit");
+    assert.equal(code, 0);
+    assert.deepEqual(JSON.parse(stdout), ["om_before_pause"]);
+    store.appendNdjson("inbox", { message_id: "om_after_resume", chat_id: "oc_lock" });
+    assert.deepEqual(store.readNdjson("inbox").map((row) => row.message_id), ["om_after_resume"]);
+  } finally {
+    if (child && child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+      await once(child, "exit");
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("EPERM inspection of a live Inbox owner fails closed without reclaim", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-state-eperm-lock-"));
   const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 60_000)"], { stdio: "ignore" });
