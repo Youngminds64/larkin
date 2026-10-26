@@ -278,7 +278,7 @@ describe("Agent-centric dashboard workbench", () => {
     render(<App />);
     await screen.findByRole("heading", { level: 1, name: "Builder" });
     await userEvent.click(screen.getByRole("tab", { name: "高级" }));
-    const gap = await screen.findByLabelText("Agent 巡检间隔（分钟）");
+    const gap = await screen.findByLabelText("巡检间隔（分钟）");
     await userEvent.clear(gap);
     await userEvent.type(gap, "30");
 
@@ -288,7 +288,7 @@ describe("Agent-centric dashboard workbench", () => {
     await waitFor(() => expect(mutations).toEqual([{ operation: "set-agent-mention", agentId: "cli_AgentB2", value: "free" }]));
 
     await userEvent.click(screen.getByRole("tab", { name: "高级" }));
-    expect(screen.getByLabelText("Agent 巡检间隔（分钟）")).toHaveValue(30);
+    expect(screen.getByLabelText("巡检间隔（分钟）")).toHaveValue(30);
     await userEvent.click(screen.getByRole("button", { name: "保存 Agent 配置" }));
     await waitFor(() => expect(mutations).toHaveLength(2));
     expect(mutations[1]).toEqual({ operation: "set-agent-inbox-audit", agentId: "cli_AgentB2", intervalMs: 30 * 60_000 });
