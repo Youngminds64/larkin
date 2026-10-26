@@ -219,11 +219,11 @@ describe("Agent-centric dashboard workbench", () => {
     await userEvent.click(screen.getByRole("button", { name: "全局设置" }));
     const dialog = await screen.findByRole("dialog");
     const replyMode = within(dialog).getByLabelText("回复方式");
-    expect(replyMode).toHaveValue("card");
-    await userEvent.selectOptions(replyMode, "cli");
+    expect(replyMode).toHaveValue("cli");
+    await userEvent.selectOptions(replyMode, "card");
     await userEvent.click(within(dialog).getByRole("button", { name: "保存全局设置" }));
     await waitFor(() => expect(within(dialog).getByRole("status")).toHaveTextContent("cli_AgentA1 暂未应用"));
-    expect(mutations).toEqual([{ operation: "set-global-reply-mode", value: "cli" }]);
+    expect(mutations).toEqual([{ operation: "set-global-reply-mode", value: "card" }]);
     expect(applied).toEqual(["cli_AgentA1", "cli_AgentB2", "cli_AgentC3"]);
   });
 

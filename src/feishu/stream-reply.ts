@@ -11,7 +11,10 @@
 // The card opens lazily on the first answer text or tool call after the poll, so
 // an intentionally silent turn posts nothing. When the turn fails after a poll,
 // the Host posts or finishes the card with a visible failure instead of leaving
-// the user without a reply.
+// the user without a reply. When the card could not be created, so certainly
+// nothing reached the chat, the Host replies with a plain text message instead.
+//
+// Tool steps show only the tool name and its status, never its arguments.
 //
 // The model's current reply anchor is the canonical Inbox `last_source`, which a
 // successful scoped poll sets and the Runtime turn boundary clears. A poll is a
@@ -23,7 +26,7 @@
 // deciding to stay silent leaves nothing in the group.
 //
 // The mode is the global `replyMode` in Larkin config (dashboard 全局设置), else LARKIN_REPLY_MODE;
-// `cli` restores the legacy model-driven `+messages-reply`.
+// it defaults to `cli`, the model-driven `+messages-reply`, and card mode is opt-in.
 
 import type { NormalizedRuntimeEvent } from "../runtime/runtime-contracts.js";
 
@@ -59,7 +62,6 @@ export const STREAM_REPLY_INITIAL_TEXT = "正在思考…";
 export const STREAM_REPLY_FAILURE_TEXT = "处理这条消息时出错了，没能完成回复。请稍后重试。";
 export const STREAM_REPLY_SILENT_TEXT = "已处理完成，没有需要回复的内容。";
 
-const MAX_DETAIL_CHARS = 160;
 const MAX_THINKING_CHARS = 600;
 const MAX_STEP_LINES = 60;
 const SUMMARY_CHARS = 50;
@@ -76,19 +78,9 @@ export function replyAddressOf(source: StreamReplySource | null): ReplyAddress |
   return null;
 }
 
-/** One-line, bounded, credential-redacted tool argument for display on the card. */
-export function toolDetailForCard(value: string | undefined): string {
-  if (!value) return "";
-  const redacted = value.replace(/\s+/g, " ").trim()
-    .replace(/(bearer\s+)[^\s"']+/gi, "$1***")
-    .replace(/((?:token|secret|password|passwd|api[_-]?key|authorization|cookie)[^\s=:]*\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"']+)/gi, "$1***")
-    .replace(/(--(?:token|secret|password|api-key|app-secret)[= ])\S+/gi, "$1***");
-  return redacted.length > MAX_DETAIL_CHARS ? `${redacted.slice(0, MAX_DETAIL_CHARS - 1)}…` : redacted;
-}
-
 type Step =
   | { kind: "thinking"; text: string }
-  | { kind: "tool"; key: string; name: string; detail: string; status: "running" | "completed" | "failed" };
+  | { kind: "tool"; key: string; name: string; status: "running" | "completed" | "failed" };
 type Entry = { kind: "text"; text: string } | { kind: "steps"; steps: Step[] };
 
 const STATUS_LABEL = { running: "执行中", completed: "完成", failed: "失败" } as const;
@@ -99,8 +91,7 @@ function stepLines(steps: readonly Step[]): string[] {
       const text = step.text.replace(/\s+/g, " ").trim();
       return `> ${text.length > MAX_THINKING_CHARS ? `${text.slice(0, MAX_THINKING_CHARS - 1)}…` : text}`;
     }
-    const detail = step.detail ? `\n  \`${step.detail.replace(/`/g, "'")}\`` : "";
-    return `- ${step.name} · ${STATUS_LABEL[step.status]}${detail}`;
+    return `- ${step.name} · ${STATUS_LABEL[step.status]}`;
   });
   return lines.length > MAX_STEP_LINES ? [`…（省略前 ${lines.length - MAX_STEP_LINES} 步）`, ...lines.slice(-MAX_STEP_LINES)] : lines;
 }
@@ -176,6 +167,8 @@ class CardReply {
   private applied: Record<string, unknown> | null = null;
   private elementStreaming = true;
   private dead = false;
+  /** The card failed before Feishu could have posted anything, so a plain reply cannot duplicate it. */
+  private unsent = false;
   private chain: Promise<void>;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private lastFlushAt = 0;
@@ -190,8 +183,9 @@ class CardReply {
     this.chain = this.start();
   }
 
+  /** The answer text exactly as the model wrote it; blank blocks are skipped. */
   get answer(): string {
-    return this.entries.flatMap((entry) => entry.kind === "text" && entry.text.trim() ? [entry.text.trim()] : []).join("\n\n");
+    return this.entries.flatMap((entry) => entry.kind === "text" && entry.text.trim() ? [entry.text] : []).join("\n\n");
   }
 
   appendText(text: string, newBlock: boolean): void {
@@ -217,10 +211,10 @@ class CardReply {
     this.schedule();
   }
 
-  toolStarted(name: string, detail: string, toolId?: string): void {
+  toolStarted(name: string, toolId?: string): void {
     if (this.finished) return;
     this.toolSerial += 1;
-    this.stepsEntry().push({ kind: "tool", key: toolId || `#${this.toolSerial}`, name, detail: toolDetailForCard(detail), status: "running" });
+    this.stepsEntry().push({ kind: "tool", key: toolId || `#${this.toolSerial}`, name, status: "running" });
     this.status = `正在执行：${name}`;
     this.schedule();
   }
@@ -243,13 +237,32 @@ class CardReply {
     this.finished = true;
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
     const final = this.renderFinal(failure);
-    this.chain = this.chain
-      .then(() => this.apply(final))
-      .then(() => this.closeStreaming(final))
-      .then(() => {
-        if (!this.dead) this.log(`流式卡片已发送 anchor=${this.address.anchor} message=${this.messageId} chars=${this.answer.length}`);
-      })
-      .finally(() => this.settle());
+    const plain = failure ? (this.answer ? `${this.answer}\n\n${failure}` : failure) : this.answer || STREAM_REPLY_SILENT_TEXT;
+    this.chain = this.chain.then(() => this.deliverFinal(final, plain)).finally(() => this.settle());
+  }
+
+  private async deliverFinal(final: Record<string, unknown>, plain: string): Promise<void> {
+    if (this.dead) {
+      if (this.unsent) await this.replyPlain(plain);
+      return;
+    }
+    // The card counts as sent only once its final body landed; one retry covers a transient failure.
+    const landed = await this.apply(final) || await this.apply(final);
+    await this.closeStreaming(final);
+    if (landed) this.log(`流式卡片已发送 anchor=${this.address.anchor} message=${this.messageId} chars=${this.answer.length}`);
+    else this.log(`流式卡片最终内容未能写入，用户只看到部分回复 anchor=${this.address.anchor} message=${this.messageId}`);
+  }
+
+  private async replyPlain(text: string): Promise<void> {
+    try {
+      const sent = responseData(await this.client.im.v1.message.reply({
+        path: { message_id: this.address.anchor },
+        data: { msg_type: "text", content: JSON.stringify({ text }), reply_in_thread: this.address.inThread },
+      }), "im.message.reply");
+      this.log(`流式卡片不可用，已改用普通消息回复 anchor=${this.address.anchor} message=${String(sent.message_id ?? "")} chars=${text.length}`);
+    } catch (error) {
+      this.log(`普通消息回复也失败 anchor=${this.address.anchor}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private stepsEntry(): Step[] {
@@ -288,19 +301,25 @@ class CardReply {
   }
 
   private async start(): Promise<void> {
+    // Only a reply request that failed in transit may still have posted the card.
+    let mayHavePosted = false;
     try {
       const card = this.renderStreaming();
       const created = responseData(await this.client.cardkit.v1.card.create({ data: { type: "card_json", data: JSON.stringify(card) } }), "cardkit.card.create");
       this.cardId = String(created.card_id ?? "");
       if (!this.cardId) throw new Error("cardkit.card.create returned no card_id");
-      const sent = responseData(await this.client.im.v1.message.reply({
+      mayHavePosted = true;
+      const response = await this.client.im.v1.message.reply({
         path: { message_id: this.address.anchor },
         data: { msg_type: "interactive", content: JSON.stringify({ type: "card", data: { card_id: this.cardId } }), reply_in_thread: this.address.inThread },
-      }), "im.message.reply");
+      });
+      mayHavePosted = false;
+      const sent = responseData(response, "im.message.reply");
       this.messageId = String(sent.message_id ?? "");
       this.applied = card;
     } catch (error) {
       this.dead = true;
+      this.unsent = !mayHavePosted;
       this.log(`流式卡片回复失败 anchor=${this.address.anchor}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -312,13 +331,14 @@ class CardReply {
       this.timer = null;
       this.lastFlushAt = this.now();
       const next = this.renderStreaming();
-      this.chain = this.chain.then(() => this.apply(next));
+      this.chain = this.chain.then(async () => { await this.apply(next); });
     }, wait);
     this.timer.unref?.();
   }
 
-  private async apply(next: Record<string, unknown>): Promise<void> {
-    if (this.dead || !this.cardId || !this.applied) return;
+  /** Bring the card to `next`; false when Feishu did not take the update. */
+  private async apply(next: Record<string, unknown>): Promise<boolean> {
+    if (this.dead || !this.cardId || !this.applied) return false;
     const previous = this.applied;
     try {
       if (this.elementStreaming && structureOf(previous) === structureOf(next)) {
@@ -333,7 +353,7 @@ class CardReply {
             }), "cardkit.cardElement.content");
           }
           this.applied = next;
-          return;
+          return true;
         } catch (error) {
           this.elementStreaming = false;
           this.log(`流式卡片逐段更新失败，改为整卡更新 anchor=${this.address.anchor}: ${error instanceof Error ? error.message : String(error)}`);
@@ -345,8 +365,10 @@ class CardReply {
         data: { card: { type: "card_json", data: JSON.stringify(next) }, sequence: this.sequence, uuid: `u_${this.cardId}_${this.sequence}` },
       }), "cardkit.card.update");
       this.applied = next;
+      return true;
     } catch (error) {
       this.log(`流式卡片更新失败 anchor=${this.address.anchor}: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
     }
   }
 
@@ -416,12 +438,14 @@ export class StreamReplyCoordinator {
       turn.tools += 1;
       // Resolve before this call runs: a poll's own source only exists after it returns.
       const card = this.cardFor(agentId, turn, true);
-      card?.toolStarted(event.name || "工具", event.text || "", event.toolId);
+      card?.toolStarted(event.name || "工具", event.toolId);
       turn.needsResolve = true;
       return;
     }
     if (event.type === "tool-result") {
+      // A poll's source exists once it returns; record it now so a later failure answers that message.
       turn.needsResolve = true;
+      this.currentAddress(agentId, turn);
       turn.card?.toolFinished(event.ok, event.toolId, event.name);
       return;
     }
@@ -433,6 +457,8 @@ export class StreamReplyCoordinator {
     }
     if (event.type === "error" || (event.type === "input-error" && event.willRetry !== true)) {
       turn.failed = STREAM_REPLY_FAILURE_TEXT;
+      // The Host replaces a session after a terminal error and drops its later events, so end the turn now.
+      if (event.type === "error") this.endTurn(agentId);
       return;
     }
     if (event.type === "text-delta" && event.text) {
@@ -502,13 +528,13 @@ export class StreamReplyCoordinator {
         + (turn.textChars && !turn.cards ? "（有回复文字但本回合没有领取到消息，文字未发送）" : ""));
     }
     if (!turn.failed) { turn.card?.finish(); return; }
-    // A failed turn after a poll must not leave the user unanswered.
-    if (!turn.card) {
-      if (!turn.lastAddress) {
-        try { turn.lastAddress = replyAddressOf(this.options.resolveSource(agentId)); } catch { /* best effort */ }
-      }
-      if (turn.lastAddress) turn.card = this.open(agentId, turn.lastAddress);
-    }
+    // A failed turn after a poll must not leave the user unanswered. Refresh the source first, so
+    // the failure answers the latest polled message rather than an earlier card's.
+    const previous = turn.lastAddress;
+    turn.needsResolve = true;
+    const address = this.currentAddress(agentId, turn) ?? previous;
+    if (turn.card && address && turn.card.address.key !== address.key) { turn.card.finish(); turn.card = null; }
+    if (!turn.card && address) turn.card = this.open(agentId, address);
     turn.card?.finish(turn.failed);
   }
 }

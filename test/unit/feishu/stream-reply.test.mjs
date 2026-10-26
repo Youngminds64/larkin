@@ -7,7 +7,7 @@ const ROOT = path.resolve(import.meta.dirname, "..", "..", "..");
 const streamReply = await import(pathToFileURL(path.join(ROOT, "dist/feishu/stream-reply.mjs")).href);
 const {
   StreamReplyCoordinator, STREAM_REPLY_FAILURE_TEXT, STREAM_REPLY_SILENT_TEXT,
-  replyAddressOf, replyModeFromEnv, toolDetailForCard,
+  replyAddressOf, replyModeFromEnv,
 } = streamReply;
 
 function findElement(node, elementId) {
@@ -101,8 +101,8 @@ function poll(send, state, source) {
   send({ type: "tool-result", toolId: "poll", ok: true });
 }
 
-test("reply mode defaults to card and LARKIN_REPLY_MODE=cli restores the legacy CLI reply", () => {
-  assert.equal(replyModeFromEnv({}), "card");
+test("reply mode defaults to cli, so bots without the CardKit scope keep replying, and card mode is opt-in", () => {
+  assert.equal(replyModeFromEnv({}), "cli");
   assert.equal(replyModeFromEnv({ LARKIN_REPLY_MODE: "card" }), "card");
   assert.equal(replyModeFromEnv({ LARKIN_REPLY_MODE: "cli" }), "cli");
 });
@@ -117,13 +117,6 @@ test("only chat/thread sources with a real om_ anchor become card addresses", ()
   assert.equal(replyAddressOf(null), null);
   assert.equal(replyAddressOf({ deliveryTarget: "chat:oc_a", deliveryAnchor: "om_3", replyByCommand: true }), null,
     "a source that replies by command opens no card");
-});
-
-test("tool arguments shown on the card are one bounded line with credentials redacted", () => {
-  assert.equal(toolDetailForCard("curl -H 'Authorization: Bearer abc.def' \n https://x"), "curl -H 'Authorization: *** ***' https://x");
-  assert.equal(toolDetailForCard("deploy --token s3cr3t --app-secret=zzz API_KEY=k1"), "deploy --token *** --app-secret=*** API_KEY=***");
-  assert.equal(toolDetailForCard("x".repeat(500)).length, 160);
-  assert.equal(toolDetailForCard(undefined), "");
 });
 
 test("after the poll the card streams the answer, folds the steps into a replay panel and closes streaming", async () => {
@@ -145,7 +138,8 @@ test("after the poll the card streams the answer, folds the steps into a replay 
   assert.equal(card.inThread, false);
   assert.equal(answerOf(card), "你好，世界\n\n查完了。");
   assert.match(replayTitleOf(card), /过程回放 · 执行了 1 个工具调用 · 用时 1 秒/);
-  assert.equal(replayStepsOf(card), "- 执行命令 · 失败\n  `ls docs`");
+  assert.equal(replayStepsOf(card), "- 执行命令 · 失败", "a step shows the tool name and status, never its arguments");
+  assert.doesNotMatch(JSON.stringify(card.json), /ls docs/);
   assert.deepEqual(card.settings, { config: { streaming_mode: false, summary: { content: "你好，世界 查完了。" } } });
   assert.deepEqual(card.sequences, [...card.sequences].sort((a, b) => a - b), "CardKit sequences only increase");
 });
@@ -280,23 +274,105 @@ test("document-comment and reminder turns never produce an IM card", async () =>
   assert.equal(cards.length, 0);
 });
 
-test("a card that cannot be created is logged and the turn carries on", async () => {
-  const { state, logs, coordinator, send } = harness();
-  const failing = new StreamReplyCoordinator({
-    channelFor: () => ({ rawClient: { cardkit: { v1: { card: { create: async () => ({ code: 99991672, msg: "no permission" }) } } } } }),
+/** A coordinator over a client whose CardKit or IM calls fail in the given way. */
+function failingHarness(rawClient) {
+  const state = { source: null };
+  const logs = [];
+  const coordinator = new StreamReplyCoordinator({
+    channelFor: () => ({ rawClient }),
     resolveSource: () => state.source,
     log: (...parts) => logs.push(parts.join(" ")),
     throttleMs: 0, resolveIntervalMs: 0, now: () => 0,
   });
-  const relay = (event) => failing.observe("agent-1", event);
-  relay({ type: "turn-start" });
-  poll(relay, state, { deliveryTarget: "chat:oc_a", deliveryAnchor: "om_a" });
-  relay({ type: "text-delta", text: "hi", newBlock: true });
-  relay({ type: "turn-end" });
-  await failing.idle();
+  return { state, logs, coordinator, send: (event) => coordinator.observe("agent-1", event) };
+}
+
+test("a card that cannot be created falls back to a plain text reply with the answer", async () => {
+  const replies = [];
+  const { state, logs, coordinator, send } = failingHarness({
+    cardkit: { v1: { card: { create: async () => ({ code: 99991672, msg: "no permission" }) } } },
+    im: { v1: { message: { reply: async (request) => { replies.push(request); return { code: 0, data: { message_id: "om_plain" } }; } } } },
+  });
+  send({ type: "turn-start" });
+  poll(send, state, { deliveryTarget: "thread:oc_a:omt_t", deliveryAnchor: "om_a" });
+  send({ type: "text-delta", text: "hi", newBlock: true });
+  send({ type: "turn-end" });
+  await coordinator.idle();
   assert.ok(logs.some((line) => /流式卡片回复失败 anchor=om_a: cardkit\.card\.create code=99991672 no permission/.test(line)), logs.join("\n"));
+  assert.deepEqual(replies.map((request) => [request.path.message_id, request.data.msg_type, JSON.parse(request.data.content).text, request.data.reply_in_thread]),
+    [["om_a", "text", "hi", true]]);
+  assert.ok(logs.some((line) => line.startsWith("流式卡片不可用，已改用普通消息回复 anchor=om_a message=om_plain")), logs.join("\n"));
   assert.ok(!logs.some((line) => line.startsWith("流式卡片已发送")));
-  void send; void coordinator;
+});
+
+test("a card reply that failed in transit may have posted, so no plain reply duplicates it", async () => {
+  const replies = [];
+  const { state, logs, coordinator, send } = failingHarness({
+    cardkit: { v1: { card: { create: async () => ({ code: 0, data: { card_id: "card_1" } }) } } },
+    im: { v1: { message: { reply: async (request) => { replies.push(request); throw new Error("socket hang up"); } } } },
+  });
+  send({ type: "turn-start" });
+  poll(send, state, { deliveryTarget: "chat:oc_a", deliveryAnchor: "om_a" });
+  send({ type: "text-delta", text: "hi", newBlock: true });
+  send({ type: "turn-end" });
+  await coordinator.idle();
+  assert.equal(replies.length, 1, "only the card reply was attempted");
+  assert.ok(logs.some((line) => /流式卡片回复失败 anchor=om_a: socket hang up/.test(line)), logs.join("\n"));
+});
+
+test("a final card update that keeps failing is retried once and reported, not logged as sent", async () => {
+  const client = fakeClient();
+  let updates = 0;
+  client.rawClient.cardkit.v1.card.update = async () => { updates += 1; return { code: 300301, msg: "rate limited" }; };
+  const { state, logs, coordinator, send } = failingHarness(client.rawClient);
+  send({ type: "turn-start" });
+  poll(send, state, { deliveryTarget: "chat:oc_a", deliveryAnchor: "om_a" });
+  send({ type: "text-delta", text: "final answer", newBlock: true });
+  send({ type: "turn-end" });
+  await coordinator.idle();
+  assert.equal(updates, 2, "the final body is retried once");
+  assert.ok(logs.some((line) => line.startsWith("流式卡片最终内容未能写入")), logs.join("\n"));
+  assert.ok(!logs.some((line) => line.startsWith("流式卡片已发送")), logs.join("\n"));
+});
+
+test("answer text keeps its exact leading and trailing whitespace", async () => {
+  const { cards, state, coordinator, send } = harness();
+  send({ type: "turn-start" });
+  poll(send, state, { deliveryTarget: "chat:oc_a", deliveryAnchor: "om_a" });
+  send({ type: "text-delta", text: "    indented code\n", newBlock: true });
+  send({ type: "activity", activity: "tool", name: "执行命令", toolId: "t1" });
+  send({ type: "text-delta", text: "  ", newBlock: true });
+  send({ type: "turn-end" });
+  await coordinator.idle();
+  assert.equal(answerOf(cards[0]), "    indented code\n", "blank blocks are skipped, text is not trimmed");
+});
+
+test("a terminal Runtime error finishes the card at once, because the replaced session sends no turn-end", async () => {
+  const { cards, state, coordinator, send } = harness();
+  send({ type: "turn-start" });
+  poll(send, state, { deliveryTarget: "chat:oc_a", deliveryAnchor: "om_a" });
+  send({ type: "text-delta", text: "half", newBlock: true });
+  send({ type: "error", message: "runtime crashed" });
+  await coordinator.idle();
+  assert.equal(cards.length, 1);
+  assert.equal(answerOf(cards[0]), `half\n\n<font color='grey'>${STREAM_REPLY_FAILURE_TEXT}</font>`);
+  assert.equal(cards[0].settings?.config.streaming_mode, false);
+});
+
+test("a failure after polling A then B answers B, not the earlier card's message", async () => {
+  const { cards, state, coordinator, send } = harness();
+  send({ type: "turn-start" });
+  poll(send, state, { deliveryTarget: "chat:oc_a", deliveryAnchor: "om_a" });
+  send({ type: "text-delta", text: "answer A", newBlock: true });
+  poll(send, state, { deliveryTarget: "chat:oc_b", deliveryAnchor: "om_b" });
+  send({ type: "input-error", inputId: "i1", retryable: false, message: "provider down" });
+  state.source = null; // the turn boundary clears the source before turn-end is observed
+  send({ type: "turn-end" });
+  await coordinator.idle();
+  assert.deepEqual(cards.map((card) => [card.replyTo, answerOf(card)]), [
+    ["om_a", "answer A"],
+    ["om_b", STREAM_REPLY_FAILURE_TEXT],
+  ]);
 });
 
 test("each turn with reply text logs a diagnostic summary, flagging text that had no polled message", async () => {

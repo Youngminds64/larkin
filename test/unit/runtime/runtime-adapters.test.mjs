@@ -1714,6 +1714,11 @@ test("Codex, Claude and Pi emit ordered text-delta events with block boundaries 
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(textDeltas(codex.events), ["|Hel", "lo", "|Done"]);
 
+  codex.child.stdout.write(`${JSON.stringify({ method: "item/started", params: { item: { type: "commandExecution", id: "c1", command: "curl -H 'Authorization: Bearer s3cr3t' x" } } })}\n`);
+  await new Promise((resolve) => setImmediate(resolve));
+  const toolEvent = codex.events.findLast((event) => event.type === "activity" && event.activity === "tool");
+  assert.deepEqual(toolEvent, { type: "activity", activity: "tool", name: "执行命令", toolId: "c1" }, "tool activity carries no arguments");
+
   const child = new FakeProcess();
   const claude = await createNativeRuntimeAdapter("claude", {
     spawn: () => child, mkdir: () => {}, writeFile: () => {},

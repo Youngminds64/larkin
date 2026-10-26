@@ -186,29 +186,15 @@ function parseJson(line: string): Record<string, any> | null {
   } catch { return null; }
 }
 
-/** The most telling single argument of a tool call, for the streaming card's step list. */
-function toolInputSummary(input: unknown): string {
-  if (typeof input === "string") return input;
-  if (!input || typeof input !== "object") return "";
-  const record = input as Record<string, unknown>;
-  for (const key of ["command", "cmd", "file_path", "path", "pattern", "query", "url", "description", "prompt"]) {
-    const value = record[key];
-    if (typeof value === "string" && value.trim()) return value;
-    if (Array.isArray(value) && value.every((part) => typeof part === "string")) return value.join(" ");
-  }
-  return "";
-}
-
-/** Display name and argument for a Codex app-server tool item; null for messages and reasoning. */
-function codexToolDisplay(item: Record<string, any> | undefined): { name: string; detail: string } | null {
+/** Display name of a Codex app-server tool item; null for messages and reasoning. Arguments are never shown. */
+function codexToolName(item: Record<string, any> | undefined): string | null {
   if (!item || typeof item.type !== "string") return null;
   switch (item.type) {
-    case "commandExecution": return { name: "执行命令", detail: toolInputSummary({ command: item.command }) };
-    case "mcpToolCall": return { name: [item.server, item.tool].filter(Boolean).join("/") || "MCP 工具", detail: toolInputSummary(item.arguments) };
-    case "fileChange": return { name: "修改文件", detail: Array.isArray(item.changes)
-      ? item.changes.map((change: { path?: unknown }) => String(change?.path ?? "")).filter(Boolean).join(", ") : "" };
-    case "webSearch": return { name: "网页搜索", detail: typeof item.query === "string" ? item.query : "" };
-    case "dynamicToolCall": return { name: String(item.tool || "工具"), detail: toolInputSummary(item.arguments) };
+    case "commandExecution": return "执行命令";
+    case "mcpToolCall": return [item.server, item.tool].filter(Boolean).join("/") || "MCP 工具";
+    case "fileChange": return "修改文件";
+    case "webSearch": return "网页搜索";
+    case "dynamicToolCall": return String(item.tool || "工具");
     default: return null;
   }
 }
@@ -383,11 +369,10 @@ class CodexSession extends EventSession {
       this.emit({ type: "turn-end", ...(this.threadId ? { sessionId: this.threadId } : {}), ...(turnId ? { turnId } : {}) });
     } else if (message.method === "item/started" && message.params?.item?.type === "agentMessage") {
       this.textBlockPending = true;
-    } else if (message.method === "item/started" && codexToolDisplay(message.params?.item)) {
-      const tool = codexToolDisplay(message.params.item)!;
-      this.emit({ type: "activity", activity: "tool", name: tool.name, ...(tool.detail ? { text: tool.detail } : {}),
+    } else if (message.method === "item/started" && codexToolName(message.params?.item)) {
+      this.emit({ type: "activity", activity: "tool", name: codexToolName(message.params.item)!,
         ...(message.params.item.id ? { toolId: String(message.params.item.id) } : {}) });
-    } else if (message.method === "item/completed" && codexToolDisplay(message.params?.item)) {
+    } else if (message.method === "item/completed" && codexToolName(message.params?.item)) {
       const item = message.params.item;
       const status = String(item.status || "completed").toLowerCase();
       const ok = status !== "failed" && status !== "declined" && (item.exitCode === undefined || item.exitCode === null || item.exitCode === 0);
@@ -563,9 +548,7 @@ class ClaudeSession extends EventSession {
         if (block.type === "text" && block.text) this.emit({ type: "activity", activity: "text", text: String(block.text) });
         if (block.type === "thinking" && block.thinking) this.emit({ type: "activity", activity: "thinking", text: String(block.thinking) });
         if (block.type === "tool_use") {
-          const detail = toolInputSummary(block.input);
-          this.emit({ type: "activity", activity: "tool", name: String(block.name || "tool"), ...(detail ? { text: detail } : {}),
-            ...(block.id ? { toolId: String(block.id) } : {}) });
+          this.emit({ type: "activity", activity: "tool", name: String(block.name || "tool"), ...(block.id ? { toolId: String(block.id) } : {}) });
         }
       }
       const next = this.gated.shift();
@@ -820,8 +803,7 @@ class PiSession extends EventSession {
         this.toolCallOpen = true;
         this.emit({ type: "runtime-observation", runtime: "pi", distribution: this.distribution, phase: "tool_call" });
       }
-      const detail = toolInputSummary(event.args);
-      this.emit({ type: "activity", activity: "tool", name: String(event.toolName || "tool"), ...(detail ? { text: detail } : {}),
+      this.emit({ type: "activity", activity: "tool", name: String(event.toolName || "tool"),
         ...(event.toolCallId ? { toolId: String(event.toolCallId) } : {}) });
     }
     else if (event?.type === "tool_execution_end") {

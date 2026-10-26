@@ -205,8 +205,8 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
   const [serverAudit, setServerAudit] = useState({ enabled: false, intervalMs: 15 * 60_000 });
   const [draftAudit, setDraftAudit] = useState({ enabled: false, intervalMs: 15 * 60_000 });
   const [draftAuditGapMinutes, setDraftAuditGapMinutes] = useState("15");
-  const [serverReplyMode, setServerReplyMode] = useState<"card" | "cli">("card");
-  const [draftReplyMode, setDraftReplyMode] = useState<"card" | "cli">("card");
+  const [serverReplyMode, setServerReplyMode] = useState<"card" | "cli">("cli");
+  const [draftReplyMode, setDraftReplyMode] = useState<"card" | "cli">("cli");
   const [agentIds, setAgentIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -222,8 +222,8 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
       setServerAudit(value.inboxAudit);
       setDraftAudit(value.inboxAudit);
       setDraftAuditGapMinutes(formatAuditGapMinutes(value.inboxAudit.intervalMs));
-      setServerReplyMode(value.replyMode ?? "card");
-      setDraftReplyMode(value.replyMode ?? "card");
+      setServerReplyMode(value.replyMode ?? "cli");
+      setDraftReplyMode(value.replyMode ?? "cli");
       setAgentIds(value.agents.map((agent) => agent.agentId));
       setFeedback(null);
     }).catch((error) => { if (!controller.signal.aborted) setFeedback(error.message); })
@@ -291,8 +291,8 @@ function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; o
       <p className="field-help">未单独设置的 Agent 和群会使用这个值。机器人消息仍必须精确 @ 当前 Agent。</p>
       <label><span>回复方式</span>
         <select aria-label="回复方式" value={draftReplyMode} onChange={(event) => setDraftReplyMode(event.target.value as "card" | "cli")} disabled={loading}>
-          <option value="card">流式卡片 · Larkin 把回复实时写进卡片</option>
           <option value="cli">命令行回复 · Agent 自己用 lark-cli 发消息</option>
+          <option value="card">流式卡片 · Larkin 把回复实时写进卡片（机器人需有 cardkit:card:write 权限）</option>
         </select>
       </label>
       <p className="field-help">对所有 Agent 生效。保存后各 Agent 会依次重新加载（保留对话上下文）；正忙的 Agent 会保持待应用。</p>

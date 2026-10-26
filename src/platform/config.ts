@@ -62,7 +62,7 @@ export interface HydratedConfig {
   serverId: string | null;
   mentionPolicy: MentionPolicy;
   inboxAudit?: InboxAuditResolved;
-  /** Who delivers IM replies; absent means the Runtime process default (LARKIN_REPLY_MODE, else card). */
+  /** Who delivers IM replies; absent means the Runtime process default (LARKIN_REPLY_MODE, else cli). */
   replyMode?: ReplyMode;
   configDir: string;
   larkinHome: string;

@@ -44,7 +44,7 @@ export interface AgentRuntimeConfig {
   previousSession?: PreviousSessionRef | null;
   larkConfigDir?: string;
   feishuAppId?: string;
-  /** Global reply mode from Larkin config; null/absent falls back to LARKIN_REPLY_MODE, else card. */
+  /** Global reply mode from Larkin config; null/absent falls back to LARKIN_REPLY_MODE, else cli. */
   replyMode?: ReplyMode | null;
 }
 
