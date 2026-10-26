@@ -560,7 +560,7 @@ function guardedTarget(decision: Extract<LarkCliCommandDecision, { kind: "guarde
   const messageId = policyFlagValue(argv, "--message-id");
   if (!messageId) throw new Error(`${decision.operation} 写入缺少 --message-id`);
   const target = store.resolveInboxMessageTarget(messageId);
-  if (!target) throw new Error(`无法从 Inbox 状态确定 ${messageId} 的 target；先 poll 对应消息，禁止旁路 target binding`);
+  if (!target) throw new Error(`${decision.operation === "reply" ? "回复未发送" : `${decision.operation} 未执行`}：本 Agent 的 Inbox 记录里没有 ${messageId}`);
   return feishuImTarget(target);
 }
 
