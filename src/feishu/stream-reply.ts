@@ -497,7 +497,9 @@ export class StreamReplyCoordinator {
 
   private currentAddress(agentId: string, turn: TurnState): ReplyAddress | null {
     const due = turn.needsResolve || this.now() - turn.lastResolveAt >= this.resolveIntervalMs;
-    if (!due) return turn.card?.address ?? turn.lastAddress;
+    // A tool result refreshes lastAddress before the next card opens. Inside the cache
+    // window that refreshed address is authoritative; the open card can still be the previous poll.
+    if (!due) return turn.lastAddress;
     turn.needsResolve = false;
     turn.lastResolveAt = this.now();
     let source: StreamReplySource | null = null;

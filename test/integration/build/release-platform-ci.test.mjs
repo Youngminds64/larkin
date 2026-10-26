@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { test } from "bun:test";
 
@@ -194,4 +196,79 @@ test("package version and explicit tag publication share one immutable combined-
   assert.match(workflow, /publish:\n[\s\S]*permissions:\n\s+contents: write/);
   assert.doesNotMatch(workflow, /git (?:commit|push)|continue-on-error|\bnode\b|\bpnpm\b|\bnpm (?:i|install|ci|run|publish|config|version|exec|link|uninstall)\b/);
   assert.doesNotMatch(intent, /git push|--force/);
+});
+
+function workflowStepRun(file, stepId) {
+  const text = read(file);
+  const marker = `id: ${stepId}\n`;
+  const at = text.indexOf(marker);
+  assert.notEqual(at, -1, stepId);
+  const after = text.slice(at + marker.length);
+  const header = after.match(/^        run: \|\n/);
+  assert.ok(header, `${file} ${stepId} run block`);
+  const lines = [];
+  for (const line of after.slice(header[0].length).split("\n")) {
+    if (line.startsWith("          ")) lines.push(line.slice(10));
+    else if (line === "") lines.push("");
+    else break;
+  }
+  while (lines.at(-1) === "") lines.pop();
+  return `${lines.join("\n")}\n`;
+}
+
+test("release and npm workflows accept only an exact bun@X.Y.Z pin before stripping it", () => {
+  const fullPin = '[[ "$version" =~ ^bun@[0-9]+\\.[0-9]+\\.[0-9]+$ ]]';
+  const strip = 'version="${version#bun@}"';
+  const steps = [
+    [".github/workflows/release.yml", "candidate-bun", "release-source/package.json"],
+    [".github/workflows/npm-publish.yml", "release-bun", "package.json"],
+  ];
+  const cases = [
+    ["bun1314", { packageManager: "bun@1.3.14" }, "1.3.14"],
+    ["bun144", { packageManager: "bun@1.4.4" }, "1.4.4"],
+    ["missing", {}, null],
+    ["null", { packageManager: null }, null],
+    ["empty", { packageManager: "" }, null],
+    ["partial", { packageManager: "bun@1.4" }, null],
+    ["other", { packageManager: "npm@1.3.14" }, null],
+    ["bare", { packageManager: "1.3.14" }, null],
+    ["injection", { packageManager: "bun@1.3.14; touch injected" }, null],
+    ["substitution", { packageManager: "bun@$(touch injected)" }, null],
+    ["newline", { packageManager: "bun@1.3.14\nversion=1.4.4" }, null],
+    ["number", { packageManager: 134 }, null],
+    ["array", { packageManager: ["bun@1.3.14"] }, null],
+    ["malformed", "{", null],
+    ["no-file", undefined, null],
+  ];
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "larkin-bun-pin-"));
+  try {
+    for (const [file, stepId, packagePath] of steps) {
+      const script = workflowStepRun(file, stepId);
+      assert.ok(script.includes(fullPin), file);
+      assert.ok(script.indexOf(fullPin) < script.indexOf(strip), `${file} checks the full pin before stripping`);
+      for (const [label, data, expected] of cases) {
+        const dir = path.join(root, stepId, label);
+        fs.mkdirSync(path.dirname(path.join(dir, packagePath)), { recursive: true });
+        if (data !== undefined) {
+          fs.writeFileSync(path.join(dir, packagePath), typeof data === "string" ? data : `${JSON.stringify(data)}\n`);
+        }
+        const output = path.join(dir, "github-output");
+        fs.writeFileSync(output, "");
+        const result = spawnSync("/bin/bash", ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script], {
+          cwd: dir,
+          env: { ...process.env, GITHUB_OUTPUT: output },
+          encoding: "utf8",
+        });
+        assert.equal(fs.existsSync(path.join(dir, "injected")), false, `${stepId} ${label} executed shell from the pin`);
+        if (expected === null) {
+          assert.notEqual(result.status, 0, `${stepId} ${label} should reject\n${result.stderr}`);
+          continue;
+        }
+        assert.equal(result.status, 0, `${stepId} ${label} should accept\n${result.stderr}`);
+        assert.equal(fs.readFileSync(output, "utf8"), `version=${expected}\n`);
+      }
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

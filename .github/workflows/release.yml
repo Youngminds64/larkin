@@ -60,11 +60,11 @@ jobs:
         id: candidate-bun
         run: |
           version="$(jq -r '.packageManager // empty' release-source/package.json)"
-          version="${version#bun@}"
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+          [[ "$version" =~ ^bun@[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
             echo "Refusing to release: release source package.json does not pin packageManager bun@X.Y.Z" >&2
             exit 1
           }
+          version="${version#bun@}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Require default-branch workflow code for recovery

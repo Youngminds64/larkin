@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 import { test } from "bun:test";
 import { pathToFileURL } from "node:url";
@@ -395,4 +396,71 @@ test("each turn with reply text logs a diagnostic summary, flagging text that ha
   send({ type: "turn-start" });
   send({ type: "turn-end" });
   assert.equal(logs.length, before, "a silent turn logs nothing");
+});
+
+/** Default 500ms source cache and an injected clock. Does not pass resolveIntervalMs. */
+function productionCacheHarness() {
+  const client = fakeClient();
+  const state = { source: null };
+  const logs = [];
+  let clock = 1_000;
+  const coordinator = new StreamReplyCoordinator({
+    channelFor: () => ({ rawClient: client.rawClient }),
+    resolveSource: () => state.source,
+    log: (...parts) => logs.push(parts.join(" ")),
+    throttleMs: 0,
+    now: () => clock,
+  });
+  return {
+    cards: client.cards,
+    state,
+    logs,
+    coordinator,
+    send: (event) => coordinator.observe("agent-1", event),
+    advance(ms) { clock += ms; },
+  };
+}
+
+test("the Host keeps the production 500ms source cache", () => {
+  const source = fs.readFileSync(path.join(ROOT, "src/feishu/host-shell.ts"), "utf8");
+  const at = source.indexOf("new StreamReplyCoordinator(");
+  const call = source.slice(at, source.indexOf("});", at) + 3);
+  assert.match(call, /resolveSource:/);
+  assert.doesNotMatch(call, /resolveIntervalMs|now:/);
+});
+
+test("text for a second poll stays on that poll's card inside the default 500ms source cache", async () => {
+  const { cards, state, coordinator, send, advance } = productionCacheHarness();
+  assert.equal(coordinator.resolveIntervalMs, 500);
+  send({ type: "turn-start" });
+  poll(send, state, { deliveryTarget: "chat:oc_a", deliveryAnchor: "om_a" });
+  send({ type: "text-delta", text: "answer A", newBlock: true });
+  advance(1);
+  poll(send, state, { deliveryTarget: "chat:oc_b", deliveryAnchor: "om_b" });
+  send({ type: "text-delta", text: "answer B", newBlock: true });
+  send({ type: "turn-end" });
+  await coordinator.idle();
+  assert.deepEqual(cards.map((card) => [card.replyTo, answerOf(card)]), [
+    ["om_a", "answer A"],
+    ["om_b", "answer B"],
+  ]);
+});
+
+test("without a new poll the default source cache holds the open card until 500ms", async () => {
+  const { cards, state, coordinator, send, advance } = productionCacheHarness();
+  assert.equal(coordinator.resolveIntervalMs, 500);
+  send({ type: "turn-start" });
+  poll(send, state, { deliveryTarget: "chat:oc_a", deliveryAnchor: "om_a" });
+  send({ type: "text-delta", text: "answer A", newBlock: true });
+  state.source = { deliveryTarget: "chat:oc_b", deliveryAnchor: "om_b" };
+  advance(499);
+  send({ type: "text-delta", text: " more", newBlock: false });
+  advance(1);
+  send({ type: "text-delta", text: "answer B", newBlock: true });
+  send({ type: "turn-end" });
+  await coordinator.idle();
+  assert.deepEqual(cards.map((card) => [card.replyTo, answerOf(card)]), [
+    ["om_a", "answer A more"],
+    ["om_b", "answer B"],
+  ]);
 });
