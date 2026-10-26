@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, AlertTriangle, Bell, Bot, Check, ChevronRight, CircleDot, Clock3, File, Folder,
-  Gauge, Menu, MessageSquareText, RefreshCw, ScrollText, Search, Settings2, SlidersHorizontal, Users, XCircle,
+  Gauge, Menu, MessageSquareText, RefreshCw, ScrollText, Search, SlidersHorizontal, Users, XCircle,
 } from "lucide-react";
 import { AGENT_TABS, createLatestResponseGate, filterAgents, parseRoute, reconcileAgentId, routeSearch, sameDraft, type AgentTab } from "./dashboard-state";
 import type { CapabilitiesResponse, CapabilityKind, ConfigAgent, ConfigResponse, DashboardAgent, InstructionFilesResponse, RuntimeModel, RuntimeReadinessView, StandingPromptResponse, StatusResponse, WorkspaceProjection } from "./types";
 import { Badge, Button, EmptyState, Sheet, cn } from "./components/ui";
-import { MENTION_POLICY_OPTIONS, type MentionPolicy } from "./mention-policy";
+import { MENTION_POLICY_OPTIONS } from "./mention-policy";
 import { RUNTIME_OPTIONS } from "../../runtime/user-runtime.js";
 
 const TAB_LABELS: Record<AgentTab, string> = {
@@ -207,86 +207,6 @@ function AgentSidebar({ agents, selectedId, onSelect, compact = false }: {
   </div>;
 }
 
-function GlobalSettingsSheet({ open, onOpenChange, onSaved }: { open: boolean; onOpenChange: (open: boolean) => void; onSaved: () => void }) {
-  const [serverValue, setServerValue] = useState<"require" | "free">("require");
-  const [draft, setDraft] = useState<"require" | "free">("require");
-  const [serverReplyMode, setServerReplyMode] = useState<"card" | "cli">("card");
-  const [draftReplyMode, setDraftReplyMode] = useState<"card" | "cli">("card");
-  const [agentIds, setAgentIds] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
-  const dirty = draft !== serverValue || draftReplyMode !== serverReplyMode;
-  useEffect(() => {
-    if (!open) return;
-    const controller = new AbortController();
-    setLoading(true);
-    void privateGet<ConfigResponse>("/api/config?chats=0", { signal: controller.signal }).then((value) => {
-      setServerValue(value.mentionPolicy);
-      setDraft(value.mentionPolicy);
-      setServerReplyMode(value.replyMode ?? "card");
-      setDraftReplyMode(value.replyMode ?? "card");
-      setAgentIds(value.agents.map((agent) => agent.agentId));
-      setFeedback(null);
-    }).catch((error) => { if (!controller.signal.aborted) setFeedback(error.message); })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
-  }, [open]);
-  const requestOpenChange = (next: boolean) => {
-    if (!next && dirty && !window.confirm("全局设置尚未保存，确定放弃草稿吗？")) return;
-    onOpenChange(next);
-  };
-  const save = async () => {
-    setLoading(true);
-    setSaving(true);
-    try {
-      let result: { revision: string; applyState: string } | null = null;
-      if (draft !== serverValue) result = await mutateConfig({ operation: "set-global-mention", value: draft });
-      const replyModeChanged = draftReplyMode !== serverReplyMode;
-      if (replyModeChanged) result = await mutateConfig({ operation: "set-global-reply-mode", value: draftReplyMode });
-      setServerValue(draft);
-      setServerReplyMode(draftReplyMode);
-      // Reply mode is fixed per Runtime session, so each Agent re-applies; a busy Agent stays pending.
-      const unapplied: string[] = [];
-      if (replyModeChanged) {
-        for (const agentId of agentIds) {
-          try {
-            await jsonFetch("/api/config/apply", {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "X-Larkin-CSRF": bootstrap.csrfCapability },
-              body: JSON.stringify({ agentId }),
-            });
-          } catch { unapplied.push(agentId); }
-        }
-      }
-      setFeedback(unapplied.length
-        ? `已保存；${unapplied.join("、")} 暂未应用（可能正忙），稍后在该 Agent 的配置页点「应用已保存配置」`
-        : result ? `已保存 · ${replyModeChanged ? "applied" : result.applyState} · ${result.revision.slice(0, 20)}…` : "没有需要保存的修改");
-      onSaved();
-    } catch (error) { setFeedback(error instanceof Error ? error.message : String(error)); }
-    finally { setLoading(false); setSaving(false); }
-  };
-  return <Sheet open={open} onOpenChange={requestOpenChange} title="全局设置" description="所有 Agent 共用的默认做法。单个 Agent 想不一样，可以在它的「回复规则」里另外设置。">
-    <div className="settings-form">
-      <label><span>群消息默认策略</span>
-        <select value={draft} onChange={(event) => setDraft(event.target.value as "require" | "free")} disabled={loading}>
-          {(["require", "free"] as const).map((value) => <option value={value} key={value}>{MENTION_POLICY_OPTIONS[value].title}</option>)}
-        </select>
-      </label>
-      <p className="field-help">{MENTION_POLICY_OPTIONS[draft].detail}没单独设置过的 Agent 和群都按这个来。</p>
-      <label><span>回复方式</span>
-        <select aria-label="回复方式" value={draftReplyMode} onChange={(event) => setDraftReplyMode(event.target.value as "card" | "cli")} disabled={loading}>
-          <option value="card">流式卡片 · 回复实时写进一张卡片，能看到思考和每一步操作</option>
-          <option value="cli">命令行 · Agent 想好后自己发一条普通消息</option>
-        </select>
-      </label>
-      <p className="field-help">对所有 Agent 生效。群里没 @ 它的消息，两种方式下都用普通消息回复。保存后各 Agent 依次重新加载，对话上下文不丢；正忙的会等它空下来。</p>
-      <div className="form-actions"><Button onClick={() => { setDraft(serverValue); setDraftReplyMode(serverReplyMode); }} disabled={!dirty || loading}>放弃草稿</Button><Button className="primary" onClick={save} disabled={!dirty || loading}>{saving ? "保存中…" : loading ? "读取中…" : "保存全局设置"}</Button></div>
-      {feedback ? <p role="status" className="feedback">{feedback}</p> : null}
-    </div>
-  </Sheet>;
-}
-
 function GroupPolicyTable({ config, onSave, disabled }: {
   config: ConfigAgent;
   onSave: (chatId: string, value: "inherit" | "require" | "free") => Promise<void>;
@@ -300,7 +220,7 @@ function GroupPolicyTable({ config, onSave, disabled }: {
     return !needle || chat.chatId.toLocaleLowerCase().includes(needle) || String(chat.displayName || "未解析群名").toLocaleLowerCase().includes(needle);
   });
   return <section className="group-policy-section" aria-labelledby="group-policy-title">
-    <div className="section-heading"><div><h3 id="group-policy-title">群策略</h3><p>个别群想和上面不一样时在这里设置，优先于上面的策略。列表只显示设置过的群。</p></div><label className="table-search"><Search size={14} /><span className="sr-only">搜索群</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索群名或 chat_id" /></label></div>
+    <div className="section-heading"><div><h3 id="group-policy-title">单独设置的群</h3><p>个别群想和上面「群消息」不一样时，在这里添加。</p></div><label className="table-search"><Search size={14} /><span className="sr-only">搜索群</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索群名或 chat_id" /></label></div>
     <div className="policy-table-wrap">
       <table className="policy-table"><thead><tr><th>群</th><th>消息策略</th><th>操作</th></tr></thead>
         <tbody>{groups.map((chat) => <tr key={chat.chatId}>
@@ -364,7 +284,7 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
       const agent = next.agents[0];
       if (!agent) throw new Error("配置投影中没有当前 Agent");
       const values = {
-        runtime: agent.runtimeOption || agent.runtime, model: agent.model, effort: agent.effort || "default", mention: agent.mention.override,
+        runtime: agent.runtimeOption || agent.runtime, model: agent.model, effort: agent.effort || "default", mention: agent.mention.effective, replyMode: agent.replyMode ?? "card",
         sandbox: agent.sandbox || "danger-full-access", fastMode: agent.fastMode === true,
         auditEnabled: agent.inboxAudit.effective.enabled,
         auditGapMinutes: formatAuditGapMinutes(agent.inboxAudit.effective.intervalMs),
@@ -414,7 +334,8 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
   // Unknown until the directory loads; only an explicit false from the catalog blocks the switch.
   const fastSupported = runtime === "codex" && !(directoryReady && models.find((item) => item.id === model)?.supportsFast === false);
   // Sandbox is a Codex launch parameter, so it is applied the same way as a model change.
-  const runtimeDirty = draft.runtime !== serverDraft.runtime || draft.model !== serverDraft.model || draft.effort !== serverDraft.effort || sandboxDirty || fastDirty;
+  const replyModeDirty = draft.replyMode !== serverDraft.replyMode;
+  const runtimeDirty = draft.runtime !== serverDraft.runtime || draft.model !== serverDraft.model || draft.effort !== serverDraft.effort || sandboxDirty || fastDirty || replyModeDirty;
   const auditEnabled = draft.auditEnabled === true;
   const auditGapMinutes = String(draft.auditGapMinutes || "");
   const auditGapDirty = draft.auditGapMinutes !== serverDraft.auditGapMinutes;
@@ -441,6 +362,7 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
       if (draft.effort !== serverDraft.effort) operations.push({ operation: "set-agent-effort", agentId, effort: draft.effort });
       if (fastDirty) operations.push({ operation: "set-agent-fast-mode", agentId, value: draft.fastMode === true });
       if (sandboxDirty) operations.push({ operation: "set-agent-sandbox", agentId, value: draft.sandbox });
+      if (replyModeDirty) operations.push({ operation: "set-agent-reply-mode", agentId, value: draft.replyMode });
       if (draft.mention !== serverDraft.mention) operations.push({ operation: "set-agent-mention", agentId, value: draft.mention });
       if (auditDirty) operations.push({
         operation: "set-agent-inbox-audit", agentId,
@@ -496,23 +418,22 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
   </div> : null;
   const status = feedback ? <p role="status" className="feedback">{feedback}</p> : null;
   if (section === "reply") {
-    const draftMention = String(draft.mention || "inherit");
-    const globalMention: MentionPolicy = response?.mentionPolicy ?? config.mention.effective;
-    const choices = [
-      { value: "inherit", title: "跟随全局设置", tag: `现在是：${MENTION_POLICY_OPTIONS[globalMention].title}`, detail: "和其他 Agent 一样，在右上角「全局设置」里统一改。" },
-      ...(["require", "free"] as const).map((value) => ({ value, tag: "", ...MENTION_POLICY_OPTIONS[value] })),
-    ];
-    return <div className="configuration-page">
-    <section className="config-section"><div className="section-heading"><div><h3>群消息</h3><p>没 @ 它的群消息，它看不看。私聊和 @ 它的消息总会回复；其他机器人的消息只有准确 @ 它才回。</p></div></div>
-      <div className="sandbox-options mention-options" role="radiogroup" aria-label="群消息策略">
+    const choiceCards = (name: string, label: string, choices: Array<{ value: string; title: string; detail: string }>) =>
+      <div className="sandbox-options" role="radiogroup" aria-label={label}>
         {choices.map((choice) => {
-          const checked = draftMention === choice.value;
+          const checked = draft[name] === choice.value;
           return <label key={choice.value} className={cn("sandbox-option", checked && "active")}>
-            <input type="radio" name={`mention-${agentId}`} value={choice.value} checked={checked} disabled={loading} onChange={() => update("mention", choice.value)} />
-            <span className="sandbox-option-text"><strong>{choice.title}</strong>{choice.tag ? <Badge>{choice.tag}</Badge> : <span />}<small>{choice.detail}</small></span>
+            <input type="radio" name={`${name}-${agentId}`} value={choice.value} checked={checked} disabled={loading} onChange={() => update(name, choice.value)} />
+            <span className="sandbox-option-text"><strong>{choice.title}</strong><span /><small>{choice.detail}</small></span>
           </label>;
         })}
-      </div>
+      </div>;
+    return <div className="configuration-page">
+    <section className="config-section"><div className="section-heading"><div><h3>群消息</h3><p>没 @ 它的群消息，它看不看。私聊和 @ 它的消息总会回复；其他机器人的消息只有准确 @ 它才回。</p></div></div>
+      {choiceCards("mention", "群消息策略", (["require", "free"] as const).map((value) => ({ value, ...MENTION_POLICY_OPTIONS[value] })))}
+    </section>
+    <section className="config-section"><div className="section-heading"><div><h3>回复方式</h3><p>回复以什么形式出现。保存后 Agent 会重新加载，对话上下文不丢；正忙时等它空下来再切换。</p></div></div>
+      {choiceCards("replyMode", "回复方式", REPLY_MODE_OPTIONS)}
       {actions}{status}
     </section>
     <GroupPolicyTable config={config} onSave={saveChat} disabled={loading} />
@@ -735,6 +656,11 @@ function Workspace({ agentId, onDirtyChange }: { agentId: string; onDirtyChange:
   </div>;
 }
 
+const REPLY_MODE_OPTIONS = [
+  { value: "card", title: "流式卡片", detail: "在原消息下发一张卡片，回复实时写进去，能看到思考和每一步操作。" },
+  { value: "cli", title: "普通消息", detail: "Agent 想好后自己发一条普通消息。" },
+];
+
 const SANDBOX_OPTIONS = [
   { value: "danger-full-access", title: "不限制", tag: "默认", detail: "能改这台电脑上的任何文件，和你自己在终端里用 Codex 一样。适合只有你在用、需要跨项目干活的 Agent。" },
   { value: "workspace-write", title: "只改自己的工作区", tag: "更安全", detail: "其他文件只能看、不能改；联网和收发飞书照常。适合放在群里、很多人都能使唤的 Agent。" },
@@ -939,7 +865,6 @@ export function App() {
   const initial = useMemo(() => parseRoute(window.location.search), []);
   const [selectedId, setSelectedId] = useState<string | null>(initial.agentId);
   const [tab, setTab] = useState<AgentTab>(initial.tab);
-  const [globalOpen, setGlobalOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [configRefreshKey, setConfigRefreshKey] = useState(0);
   const refreshConfig = useCallback(() => setConfigRefreshKey((value) => value + 1), []);
@@ -1025,7 +950,7 @@ export function App() {
   return <div className="app-shell">
     <aside className="desktop-sidebar"><div className="brand"><img src="/assets/larkin-mark.svg" alt="" /><strong>Larkin <span className="brand-version">v{packageVersion}</span></strong></div><AgentSidebar agents={agents} selectedId={selectedId} onSelect={selectAgent} /><footer>{polling.data?.daemon.running ? `${agents.length} Agents · daemon online` : "daemon offline"}</footer></aside>
     <main className="workspace-shell">
-      <div className="app-topbar"><Button className="mobile-menu" aria-label="打开 Agent 导航" onClick={() => setMobileOpen(true)}><Menu size={18} /></Button><div><strong>Larkin <span className="brand-version">v{packageVersion}</span></strong><span>{polling.data?.daemon.running ? "运行中" : "未运行"}</span>{polling.stale ? <Badge className="warning">状态陈旧</Badge> : null}</div><Button onClick={() => setGlobalOpen(true)}><Settings2 size={15} /> 全局设置</Button></div>
+      <div className="app-topbar"><Button className="mobile-menu" aria-label="打开 Agent 导航" onClick={() => setMobileOpen(true)}><Menu size={18} /></Button><div><strong>Larkin <span className="brand-version">v{packageVersion}</span></strong><span>{polling.data?.daemon.running ? "运行中" : "未运行"}</span>{polling.stale ? <Badge className="warning">状态陈旧</Badge> : null}</div></div>
       {polling.error ? <div className="stale-banner" role="alert"><AlertTriangle size={15} />状态刷新失败，保留最后一次数据：{polling.error}<Button onClick={() => void polling.retry()}>重试</Button></div> : null}
       {notice ? <div className="notice" role="status">{notice}<Button aria-label="关闭提示" onClick={() => setNotice(null)}>×</Button></div> : null}
       {polling.loading && !polling.data ? <div className="page-loading"><RefreshCw className="spin" />加载 Agent 工作台…</div> : !selected ? <EmptyState title="还没有配置任何 Agent" detail="先运行 larkin setup。" /> : <>
@@ -1046,7 +971,6 @@ export function App() {
         </div>
       </>}
     </main>
-    <GlobalSettingsSheet open={globalOpen} onOpenChange={setGlobalOpen} onSaved={refreshConfig} />
     <Sheet open={mobileOpen} onOpenChange={setMobileOpen} title="选择 Agent" description="搜索、查看状态并切换当前工作区。"><AgentSidebar compact agents={agents} selectedId={selectedId} onSelect={selectAgent} /></Sheet>
   </div>;
 }
