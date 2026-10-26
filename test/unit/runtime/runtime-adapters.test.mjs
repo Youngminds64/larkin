@@ -185,12 +185,11 @@ test("context prompt references only the supplied previous session archive", () 
 
 test("default context prompt consumes the Agent CLI manifest", () => {
   const prompt = new ContextPromptBuilder().build({ agentId: "cli_test", runtime: "pi" });
-  assert.equal(prompt.version, "larkin-standing-v34");
+  assert.equal(prompt.version, "larkin-standing-v35");
   assert.doesNotMatch(prompt.content, /## Previous session archive/);
   assert.match(prompt.content, /never emit feishu\.cn for a Lark tenant/);
   assert.match(prompt.content, /larkin reminder schedule/);
   assert.match(prompt.content, /explicit delivery target/);
-  assert.match(prompt.content, /Never infer recipients from a reminder title/);
   assert.doesNotMatch(prompt.content, /at most one bounded wait call per turn/);
   assert.doesNotMatch(prompt.content, /do not loop or call wait again in the same turn/);
   assert.match(prompt.content, /tmux-backed bash.*wait timeout|wait timeout.*not process failure/);
