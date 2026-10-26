@@ -20,15 +20,17 @@ test("dashboard standing prompt matches what the Runtime host gives a new sessio
     fs.writeFileSync(path.join(stateDir, "bot-identity.json"), JSON.stringify({ name: "小助手" }));
     const agent = { agentId, name: "fallback", runtime: "codex", stateDir };
 
-    const card = standingPromptView({ agents: { [agentId]: agent } }, agentId, {});
+    const card = standingPromptView({ agents: { [agentId]: { ...agent, replyMode: "card" } } }, agentId, {});
     assert.equal(card.version, LARKIN_CARD_STANDING_PROMPT_VERSION);
     assert.equal(card.replyMode, "card");
     assert.equal(card.runtime, "codex");
     assert.equal(card.content, new ContextPromptBuilder({ replyMode: "card" }).build({ agentId, name: "小助手", runtime: "codex" }).content);
 
-    const cli = standingPromptView({ agents: { [agentId]: { ...agent, replyMode: "cli" } } }, agentId, {});
+    // Without a configured mode the Runtime defaults to CLI replies; LARKIN_REPLY_MODE=card opts in.
+    const cli = standingPromptView({ agents: { [agentId]: agent } }, agentId, {});
     assert.equal(cli.version, LARKIN_STANDING_PROMPT_VERSION);
-    assert.equal(standingPromptView({ agents: { [agentId]: agent } }, agentId, { LARKIN_REPLY_MODE: "cli" }).version, LARKIN_STANDING_PROMPT_VERSION);
+    assert.equal(cli.replyMode, "cli");
+    assert.equal(standingPromptView({ agents: { [agentId]: agent } }, agentId, { LARKIN_REPLY_MODE: "card" }).version, LARKIN_CARD_STANDING_PROMPT_VERSION);
 
     fs.rmSync(path.join(stateDir, "bot-identity.json"));
     assert.match(standingPromptView({ agents: { [agentId]: agent } }, agentId, {}).content, /\*\*fallback\*\*/);
