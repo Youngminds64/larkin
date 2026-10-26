@@ -16,15 +16,22 @@ const bootstrap = window.__LARKIN_DASHBOARD__ || {
   packageVersion: "dev", dashboardVersion: "dev", buildFingerprint: "", csrfCapability: "",
 };
 
+const UNREACHABLE = "连不上 larkin：服务可能已停止或正在重启。确认 larkin 在运行后刷新页面。";
+
 class JsonResponseError extends Error {
-  constructor(message: string, readonly body: { error?: string; readiness?: RuntimeReadinessView }) { super(message); }
+  constructor(message: string, readonly body: { error?: string; code?: string; readiness?: RuntimeReadinessView }) { super(message); }
 }
 
 async function jsonFetch<T>(url: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, { cache: "no-store", ...init });
+  let response: Response;
+  try { response = await fetch(url, { cache: "no-store", ...init }); }
+  catch (error) {
+    if (init.signal?.aborted) throw error;
+    throw new Error(UNREACHABLE);
+  }
   if (!response.ok) {
-    const body = await response.json().catch(() => ({})) as { error?: string; readiness?: RuntimeReadinessView };
-    throw new JsonResponseError(body.error || `HTTP ${response.status}`, body);
+    const body = await response.json().catch(() => ({})) as { error?: string; code?: string; readiness?: RuntimeReadinessView };
+    throw new JsonResponseError(body.error || `请求失败（HTTP ${response.status}）`, body);
   }
   return response.json() as Promise<T>;
 }
