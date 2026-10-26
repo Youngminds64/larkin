@@ -257,6 +257,29 @@ describe("Agent-centric dashboard workbench", () => {
     expect(screen.getByLabelText("Agent 巡检间隔（分钟）")).toHaveValue(30);
   });
 
+  it("tells the user to refresh and keeps the draft when a save is rejected as coming from an expired page", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/status") return ok(status);
+      if (url.pathname === "/api/config" && init?.method === "PATCH") {
+        return Promise.resolve({ ok: false, status: 403, json: async () => ({ error: "这个页面已过期，刷新页面后再操作。" }) });
+      }
+      if (url.pathname === "/api/config") return ok(config(url.searchParams.get("agent") || undefined));
+      if (url.pathname === "/api/workspace") return ok({ kind: "directory", path: "", parent: null, entries: [] });
+      if (url.pathname === "/api/agent-rules") return ok(missingRules());
+      if (url.pathname === "/api/agent-capabilities") return ok({ runtime: "codex", items: [], unsupported: [] });
+      throw new Error(`unexpected request ${url}`);
+    }));
+    render(<App />);
+    await screen.findByRole("heading", { level: 1, name: "Builder" });
+    await userEvent.click(screen.getByRole("button", { name: "全局设置" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.selectOptions(within(dialog).getByLabelText("真人群消息默认策略"), "require");
+    await userEvent.click(within(dialog).getByRole("button", { name: "保存全局设置" }));
+    await waitFor(() => expect(within(dialog).getByRole("status")).toHaveTextContent("这个页面已过期，刷新页面后再操作"));
+    expect(within(dialog).getByLabelText("真人群消息默认策略")).toHaveValue("require");
+  });
+
   it("filters the sidebar and preserves last-known status on polling errors", async () => {
     render(<App />);
     await screen.findByRole("heading", { level: 1, name: "Builder" });
@@ -336,7 +359,7 @@ describe("Agent-centric dashboard workbench", () => {
     await act(async () => { vi.advanceTimersByTime(3_000); await Promise.resolve(); await Promise.resolve(); });
     expect(result.current.data).toBe(status);
     expect(result.current.stale).toBe(true);
-    expect(result.current.error).toBe("poll offline");
+    expect(result.current.error).toBe("连不上 larkin：服务可能已停止或正在重启。确认 larkin 在运行后刷新页面。");
     await act(async () => { await result.current.retry(); });
     expect(result.current.data).toBe(recovered);
     expect(result.current.stale).toBe(false);
