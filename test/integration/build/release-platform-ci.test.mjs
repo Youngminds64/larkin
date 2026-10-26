@@ -219,8 +219,36 @@ function workflowStepRun(file, stepId) {
   return `${lines.join("\n")}\n`;
 }
 
-test("release and npm workflows accept only an exact bun@X.Y.Z pin before stripping it", () => {
+// release.yml and npm-publish.yml run these selectors on ubuntu-24.04.
+// Windows has no /bin/bash. Git Bash is not that shell and does not provide the workflow jq.
+function workflowShellExecutionSupported(platform = process.platform) {
+  return platform === "linux" || platform === "darwin";
+}
+
+function workflowShellDetail(result) {
+  const error = result.error ? `${result.error.code ?? "ERR"}: ${result.error.message}` : "none";
+  return `status=${result.status} signal=${result.signal ?? "none"} error=${error}\nstderr:\n${result.stderr ?? ""}\nstdout:\n${result.stdout ?? ""}`;
+}
+
+test("release and npm workflows encode the original packageManager pin in jq", () => {
   const originalPin = 'select(type == "string" and test("^bun@[0-9]+\\\\.[0-9]+\\\\.[0-9]+\\\\z")) | sub("^bun@"; "")';
+  const steps = [
+    [".github/workflows/release.yml", "candidate-bun"],
+    [".github/workflows/npm-publish.yml", "release-bun"],
+  ];
+  assert.equal(workflowShellExecutionSupported("win32"), false, "Windows must not execute the Ubuntu packageManager shell");
+  assert.equal(workflowShellExecutionSupported("linux"), true);
+  assert.equal(workflowShellExecutionSupported("darwin"), true);
+  for (const [file, stepId] of steps) {
+    const script = workflowStepRun(file, stepId);
+    assert.ok(script.includes("jq -er "), `${file} validates the original JSON string before shell normalization`);
+    assert.ok(script.includes(originalPin), file);
+    assert.equal(script.includes("=~"), false, `${file} must not validate the pin after command substitution`);
+    assert.equal(script.includes(".packageManager // empty"), false, `${file} must not read an unvalidated raw string`);
+  }
+});
+
+test.skipIf(!workflowShellExecutionSupported())("release and npm workflows accept only an exact bun@X.Y.Z pin before stripping it (Linux and macOS only; Windows has no Ubuntu bash or workflow jq)", () => {
   const steps = [
     [".github/workflows/release.yml", "candidate-bun", "release-source/package.json"],
     [".github/workflows/npm-publish.yml", "release-bun", "package.json"],
@@ -251,10 +279,6 @@ test("release and npm workflows accept only an exact bun@X.Y.Z pin before stripp
   try {
     for (const [file, stepId, packagePath] of steps) {
       const script = workflowStepRun(file, stepId);
-      assert.ok(script.includes("jq -er "), `${file} validates the original JSON string before shell normalization`);
-      assert.ok(script.includes(originalPin), file);
-      assert.equal(script.includes("=~"), false, `${file} must not validate the pin after command substitution`);
-      assert.equal(script.includes(".packageManager // empty"), false, `${file} must not read an unvalidated raw string`);
       for (const [label, data, expected] of cases) {
         const dir = path.join(root, stepId, label);
         fs.mkdirSync(path.dirname(path.join(dir, packagePath)), { recursive: true });
@@ -268,12 +292,19 @@ test("release and npm workflows accept only an exact bun@X.Y.Z pin before stripp
           env: { ...process.env, GITHUB_OUTPUT: output },
           encoding: "utf8",
         });
+        const detail = `${stepId} ${label}\n${workflowShellDetail(result)}`;
+        if (result.error || result.status === null) {
+          assert.fail(`${detail}\n/bin/bash did not start. A missing shell is not a packageManager result.`);
+        }
+        if (/command not found/.test(`${result.stderr ?? ""}\n${result.stdout ?? ""}`)) {
+          assert.fail(`${detail}\njq or another required tool is missing. A tool failure is not a rejected pin.`);
+        }
         assert.equal(fs.existsSync(path.join(dir, "injected")), false, `${stepId} ${label} executed shell from the pin`);
         if (expected === null) {
-          assert.notEqual(result.status, 0, `${stepId} ${label} should reject\n${result.stderr}`);
+          assert.notEqual(result.status, 0, `${stepId} ${label} should reject\n${detail}`);
           continue;
         }
-        assert.equal(result.status, 0, `${stepId} ${label} should accept\n${result.stderr}`);
+        assert.equal(result.status, 0, `${stepId} ${label} should accept\n${detail}`);
         assert.equal(fs.readFileSync(output, "utf8"), `version=${expected}\n`);
       }
     }
