@@ -152,17 +152,15 @@ describe("Agent-centric dashboard workbench", () => {
     expect(screen.getByText("没有匹配的群")).toBeVisible();
   });
 
-  it("spells out which messages the Agent answers and follows the group policy draft", async () => {
+  it("offers the group policy as explained choices", async () => {
     window.history.replaceState(null, "", "/?agent=cli_AgentB2&tab=reply");
     render(<App />);
-    const rules = await screen.findByRole("table", { name: "它会回复哪些消息" });
-    const unmentioned = () => within(rules).getByRole("row", { name: /群里没 @ 它/ });
-    expect(within(rules).getByRole("row", { name: /私聊/ })).toHaveTextContent("每条都处理");
-    expect(within(rules).getByRole("row", { name: /其他机器人/ })).toHaveTextContent("@所有人 不算");
-    expect(unmentioned()).toHaveTextContent("不处理");
-    await userEvent.selectOptions(screen.getByLabelText("群消息策略"), "free");
-    expect(unmentioned()).toHaveTextContent("由它判断要不要回");
-    expect(unmentioned()).toHaveTextContent("不出卡片");
+    const policy = await screen.findByRole("radiogroup", { name: "群消息策略" });
+    expect(within(policy).getByRole("radio", { name: /^只回 @ 它的/ })).toBeChecked();
+    expect(within(policy).getByText("现在是：每条都看")).toBeVisible();
+    await userEvent.click(within(policy).getByRole("radio", { name: /^每条都看/ }));
+    expect(within(policy).getByRole("radio", { name: /^每条都看/ })).toBeChecked();
+    expect(screen.getByRole("button", { name: "保存 Agent 配置" })).toBeEnabled();
   });
 
   it("says what Inbox audit does now and how", async () => {
