@@ -502,10 +502,10 @@ function AgentConfiguration({ section, agentId, readiness, onDirtyChange, onSave
     const effectiveMention: MentionPolicy = draftMention === "inherit" ? globalMention : draftMention as MentionPolicy;
     const replyMode: ReplyMode = response?.replyMode ?? "card";
     return <div className="configuration-page">
-    <section className="config-section" aria-labelledby="reply-rules-title"><div className="section-heading"><div><h3 id="reply-rules-title">它会回复哪些消息</h3><p>按下面的设置，这个 Agent 收到各类消息时会这样做（群里个别设置过的群除外）。回复方式是{replyMode === "card" ? "流式卡片" : "命令行"}，在「全局设置」里改。</p></div></div>
+    <section className="config-section" aria-labelledby="reply-rules-title"><div className="section-heading"><div><h3 id="reply-rules-title">它会回复哪些消息</h3><p>按现在的设置，这个 Agent 收到各类消息时会这样做；下面「群策略」里单独设置过的群按各自的策略来。回复方式现在是{replyMode === "card" ? "流式卡片" : "命令行"}，在「全局设置」里改。</p></div></div>
       <div className="rules-table-wrap"><table className="rules-table" aria-labelledby="reply-rules-title"><thead><tr><th>收到的消息</th><th>会不会处理</th><th>怎么回复</th></tr></thead>
         <tbody>{describeReplyRules(effectiveMention, replyMode).map((rule) => <tr key={rule.message}><th scope="row">{rule.message}</th><td>{rule.handled}</td><td>{rule.reply}</td></tr>)}</tbody></table></div>
-      <p className="field-help">它开始处理一条消息时，会先给这条消息点一个「OnIt」表情。群里没 @ 它的消息不点，它自己发起的话题里除外。</p>
+      <p className="field-help rules-note">它开始处理一条消息时，会先给这条消息点一个「OnIt」表情。群里没 @ 它的消息不点，它自己发起的话题里除外。</p>
     </section>
     <section className="config-section"><div className="section-heading"><div><h3>群聊</h3><p>群里的消息要不要 @ 它才处理。</p></div></div>
       <div className="config-grid">

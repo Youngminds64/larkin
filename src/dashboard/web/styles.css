@@ -290,6 +290,7 @@ button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity:
 .rules-table tbody th { width: 26%; color: var(--ink); font-weight: 600; }
 .rules-table tbody td:nth-child(2) { width: 24%; }
 .rules-table td { color: var(--subtle); }
+.rules-note { margin: 10px 0 0; }
 @media (max-width: 720px) { .sandbox-options { grid-template-columns: 1fr; } }
 .compact-sidebar { padding: 16px 0; }
 @keyframes fade-in { from { opacity: 0; } }
