@@ -199,12 +199,12 @@ function toolInputText(input: unknown): string {
 function codexToolDisplay(item: Record<string, any> | undefined): { name: string; input: string } | null {
   if (!item || typeof item.type !== "string") return null;
   switch (item.type) {
-    case "commandExecution": return { name: "执行命令", input: toolInputText(item.command) };
-    case "mcpToolCall": return { name: [item.server, item.tool].filter(Boolean).join("/") || "MCP 工具", input: toolInputText(item.arguments) };
-    case "fileChange": return { name: "修改文件", input: Array.isArray(item.changes)
+    case "commandExecution": return { name: "command", input: toolInputText(item.command) };
+    case "mcpToolCall": return { name: [item.server, item.tool].filter(Boolean).join("/") || "MCP tool", input: toolInputText(item.arguments) };
+    case "fileChange": return { name: "file change", input: Array.isArray(item.changes)
       ? item.changes.map((change: { path?: unknown }) => String(change?.path ?? "")).filter(Boolean).join(", ") : "" };
-    case "webSearch": return { name: "网页搜索", input: toolInputText(item.query) };
-    case "dynamicToolCall": return { name: String(item.tool || "工具"), input: toolInputText(item.arguments) };
+    case "webSearch": return { name: "web search", input: toolInputText(item.query) };
+    case "dynamicToolCall": return { name: String(item.tool || "tool"), input: toolInputText(item.arguments) };
     default: return null;
   }
 }

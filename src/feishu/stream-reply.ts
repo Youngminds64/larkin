@@ -14,8 +14,8 @@
 // the user without a reply. When the card could not be created, so certainly
 // nothing reached the chat, the Host replies with a plain text message instead.
 //
-// A tool step shows the call's raw input, unredacted and on one line, with its status; only a
-// call without input falls back to the tool name. A long input keeps its head and tail and
+// A tool step shows the call's raw input, unredacted and on one line; only a failed call is marked,
+// and only a call without input falls back to the tool name. A long input keeps its head and tail and
 // elides the middle.
 //
 // The model's current reply anchor is the canonical Inbox `last_source`, which a
@@ -60,9 +60,9 @@ export interface StreamReplyOptions {
   now?: () => number;
 }
 
-export const STREAM_REPLY_INITIAL_TEXT = "正在思考…";
-export const STREAM_REPLY_FAILURE_TEXT = "处理这条消息时出错了，没能完成回复。请稍后重试。";
-export const STREAM_REPLY_SILENT_TEXT = "已处理完成，没有需要回复的内容。";
+export const STREAM_REPLY_INITIAL_TEXT = "Thinking…";
+export const STREAM_REPLY_FAILURE_TEXT = "Something went wrong while handling this message, so the reply is incomplete. Please try again later.";
+export const STREAM_REPLY_SILENT_TEXT = "Done. Nothing to reply.";
 
 const MAX_THINKING_CHARS = 600;
 const MAX_TOOL_INPUT_CHARS = 200;
@@ -86,7 +86,6 @@ type Step =
   | { kind: "tool"; key: string; name: string; input: string; status: "running" | "completed" | "failed" };
 type Entry = { kind: "text"; text: string } | { kind: "steps"; steps: Step[] };
 
-const STATUS_LABEL = { running: "执行中", completed: "完成", failed: "失败" } as const;
 
 /** One line of a tool input; past the limit the middle is replaced by an ellipsis. */
 function toolInputForCard(input: string): string {
@@ -107,17 +106,18 @@ function stepLines(steps: readonly Step[]): string[] {
       const text = step.text.replace(/\s+/g, " ").trim();
       return `> ${text.length > MAX_THINKING_CHARS ? `${text.slice(0, MAX_THINKING_CHARS - 1)}…` : text}`;
     }
-    return `- ${toolLabel(step)} · ${STATUS_LABEL[step.status]}`;
+    return `- ${toolLabel(step)}${step.status === "failed" ? " · failed" : ""}`;
   });
-  return lines.length > MAX_STEP_LINES ? [`…（省略前 ${lines.length - MAX_STEP_LINES} 步）`, ...lines.slice(-MAX_STEP_LINES)] : lines;
+  return lines.length > MAX_STEP_LINES ? [`… ${lines.length - MAX_STEP_LINES} earlier steps omitted`, ...lines.slice(-MAX_STEP_LINES)] : lines;
 }
 
 function stepsTitle(steps: readonly Step[]): string {
   const tools = steps.filter((step) => step.kind === "tool").length;
   const thought = steps.some((step) => step.kind === "thinking");
-  if (tools && thought) return `思考并执行了 ${tools} 个工具调用`;
-  if (tools) return `执行了 ${tools} 个工具调用`;
-  return "思考过程";
+  const calls = `${tools} tool call${tools === 1 ? "" : "s"}`;
+  if (tools && thought) return `Thinking · ${calls}`;
+  if (tools) return calls;
+  return "Thinking";
 }
 
 function panel(elementId: string, title: string, content: string): Record<string, unknown> {
@@ -213,7 +213,7 @@ class CardReply {
     } else {
       this.entries.push({ kind: "text", text });
     }
-    this.status = "正在回复…";
+    this.status = "Replying…";
     this.schedule();
   }
 
@@ -223,7 +223,7 @@ class CardReply {
     const last = steps.at(-1);
     if (last?.kind === "thinking") last.text += text;
     else steps.push({ kind: "thinking", text });
-    this.status = "正在思考…";
+    this.status = STREAM_REPLY_INITIAL_TEXT;
     this.schedule();
   }
 
@@ -232,7 +232,7 @@ class CardReply {
     this.toolSerial += 1;
     const step: Extract<Step, { kind: "tool" }> = { kind: "tool", key: toolId || `#${this.toolSerial}`, name, input: toolInputForCard(input), status: "running" };
     this.stepsEntry().push(step);
-    this.status = `正在执行：${toolLabel(step)}`;
+    this.status = `Running ${toolLabel(step)}`;
     this.schedule();
   }
 
@@ -297,7 +297,7 @@ class CardReply {
     elements.push({ tag: "markdown", element_id: "status", content: `<font color='grey'>${this.status}</font>`, text_size: "notation" });
     return cardShell(elements, {
       streaming_mode: true,
-      summary: { content: "正在回复…" },
+      summary: { content: "Replying…" },
       streaming_config: { print_frequency_ms: { default: 30 }, print_step: { default: 8 }, print_strategy: "fast" },
     });
   }
@@ -311,7 +311,7 @@ class CardReply {
     const elements: unknown[] = [];
     if (steps.length) {
       const seconds = Math.max(1, Math.round((this.now() - this.startedAt) / 1000));
-      elements.push(panel("replay", `过程回放 · ${stepsTitle(steps)} · 用时 ${seconds} 秒`, stepLines(steps).join("\n")));
+      elements.push(panel("replay", `Replay · ${stepsTitle(steps)} · ${seconds}s`, stepLines(steps).join("\n")));
     }
     elements.push({ tag: "markdown", element_id: "answer", content: body });
     return cardShell(elements, { streaming_mode: true, summary: { content: truncateSummary(failure && !answer ? failure : body) } });
@@ -455,7 +455,7 @@ export class StreamReplyCoordinator {
       turn.tools += 1;
       // Resolve before this call runs: a poll's own source only exists after it returns.
       const card = this.cardFor(agentId, turn, true);
-      card?.toolStarted(event.name || "工具", event.text || "", event.toolId);
+      card?.toolStarted(event.name || "tool", event.text || "", event.toolId);
       turn.needsResolve = true;
       return;
     }

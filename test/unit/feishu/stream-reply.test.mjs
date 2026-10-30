@@ -97,7 +97,7 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
 
 /** The poll is itself a tool call: its source appears only once it returns. */
 function poll(send, state, source) {
-  send({ type: "activity", activity: "tool", name: "执行命令", text: "larkin inbox poll --target chat:x --limit 1", toolId: "poll" });
+  send({ type: "activity", activity: "tool", name: "command", text: "larkin inbox poll --target chat:x --limit 1", toolId: "poll" });
   state.source = source;
   send({ type: "tool-result", toolId: "poll", ok: true });
 }
@@ -128,7 +128,7 @@ test("after the poll the card streams the answer, folds the steps into a replay 
   assert.equal(cards.length, 0, "neither pre-poll text nor the poll itself opens a card");
   send({ type: "text-delta", text: "你好", newBlock: true });
   send({ type: "text-delta", text: "，世界" });
-  send({ type: "activity", activity: "tool", name: "执行命令", text: "ls docs", toolId: "t1" });
+  send({ type: "activity", activity: "tool", name: "command", text: "ls docs", toolId: "t1" });
   send({ type: "tool-result", toolId: "t1", ok: false });
   send({ type: "text-delta", text: "查完了。", newBlock: true });
   send({ type: "turn-end" });
@@ -138,8 +138,8 @@ test("after the poll the card streams the answer, folds the steps into a replay 
   assert.equal(card.replyTo, "om_user");
   assert.equal(card.inThread, false);
   assert.equal(answerOf(card), "你好，世界\n\n查完了。");
-  assert.match(replayTitleOf(card), /过程回放 · 执行了 1 个工具调用 · 用时 1 秒/);
-  assert.equal(replayStepsOf(card), "- `ls docs` · 失败", "a step shows the raw input and status, not the tool name");
+  assert.match(replayTitleOf(card), /Replay · 1 tool call · 1s</);
+  assert.equal(replayStepsOf(card), "- `ls docs` · failed", "a step shows the raw input, marked only when it failed");
   assert.deepEqual(card.settings, { config: { streaming_mode: false, summary: { content: "你好，世界 查完了。" } } });
   assert.deepEqual(card.sequences, [...card.sequences].sort((a, b) => a - b), "CardKit sequences only increase");
 });
@@ -149,15 +149,15 @@ test("a long tool input keeps its head and tail on one line and elides the middl
   send({ type: "turn-start" });
   poll(send, state, { deliveryTarget: "chat:oc_room", deliveryAnchor: "om_user" });
   const command = `bash -lc "cd /srv/app &&\n${"x".repeat(400)} && echo \`done\`" TAIL_END`;
-  send({ type: "activity", activity: "tool", name: "执行命令", text: command, toolId: "long" });
-  send({ type: "activity", activity: "tool", name: "执行命令", toolId: "bare" });
+  send({ type: "activity", activity: "tool", name: "command", text: command, toolId: "long" });
+  send({ type: "activity", activity: "tool", name: "command", toolId: "bare" });
   send({ type: "turn-end" });
   await coordinator.idle();
   const [first, second] = replayStepsOf(cards[0]).split("\n");
-  const shown = /^- `(.*)` · 完成$/.exec(first)[1];
+  const shown = /^- `(.*)`$/.exec(first)[1];
   assert.equal(shown.length, 200, "the shown input is bounded");
   assert.match(shown, /^bash -lc "cd \/srv\/app && x+…x+ && echo 'done'" TAIL_END$/, "head and tail survive; newlines and backticks are flattened");
-  assert.equal(second, "- 执行命令 · 完成", "a call without input falls back to the tool name");
+  assert.equal(second, "- command", "a call without input falls back to the tool name");
 });
 
 test("while streaming, text grows through element updates and a new step restructures the card", async () => {
@@ -170,15 +170,15 @@ test("while streaming, text grows through element updates and a new step restruc
   await tick();
   assert.equal(findElement(cards[0].json, "t0").content, "第一段继续");
   assert.ok(calls.includes("content:t0"), "same structure streams the text element in place");
-  send({ type: "activity", activity: "tool", name: "网页搜索", text: "飞书 卡片", toolId: "s1" });
+  send({ type: "activity", activity: "tool", name: "web search", text: "飞书 卡片", toolId: "s1" });
   await tick();
-  assert.match(findElement(cards[0].json, "p1").header.title.content, /执行了 1 个工具调用/);
-  assert.match(findElement(cards[0].json, "status").content, /正在执行：`飞书 卡片`/);
+  assert.match(findElement(cards[0].json, "p1").header.title.content, /1 tool call/);
+  assert.match(findElement(cards[0].json, "status").content, /Running `飞书 卡片`/);
   assert.ok(calls.includes("update"), "a new steps panel is a full card update");
   send({ type: "turn-end" });
   await coordinator.idle();
   assert.equal(answerOf(cards[0]), "第一段继续");
-  assert.match(replayStepsOf(cards[0]), /`飞书 卡片` · 完成/, "a call without a reported result is complete when the turn ends");
+  assert.match(replayStepsOf(cards[0]), /^- `飞书 卡片`$/, "a call without a reported result is complete, not failed, when the turn ends");
 });
 
 test("reasoning after the poll waits for the answer and then shows in the steps", async () => {
@@ -193,7 +193,7 @@ test("reasoning after the poll waits for the answer and then shows in the steps"
   await coordinator.idle();
   assert.equal(cards.length, 1);
   assert.equal(answerOf(cards[0]), "你好！");
-  assert.match(replayTitleOf(cards[0]), /过程回放 · 思考过程/);
+  assert.match(replayTitleOf(cards[0]), /Replay · Thinking · /);
   assert.equal(replayStepsOf(cards[0]), "> 用户在打招呼，简短回应即可。");
 });
 
@@ -211,7 +211,7 @@ test("work after the poll that ends without answer text still closes its card", 
   const { cards, state, coordinator, send } = harness();
   send({ type: "turn-start" });
   poll(send, state, { deliveryTarget: "chat:oc_a", deliveryAnchor: "om_a" });
-  send({ type: "activity", activity: "tool", name: "执行命令", text: "larkin reminder add", toolId: "r1" });
+  send({ type: "activity", activity: "tool", name: "command", text: "larkin reminder add", toolId: "r1" });
   send({ type: "turn-end" });
   await coordinator.idle();
   assert.equal(cards.length, 1);
@@ -356,7 +356,7 @@ test("answer text keeps its exact leading and trailing whitespace", async () => 
   send({ type: "turn-start" });
   poll(send, state, { deliveryTarget: "chat:oc_a", deliveryAnchor: "om_a" });
   send({ type: "text-delta", text: "    indented code\n", newBlock: true });
-  send({ type: "activity", activity: "tool", name: "执行命令", toolId: "t1" });
+  send({ type: "activity", activity: "tool", name: "command", toolId: "t1" });
   send({ type: "text-delta", text: "  ", newBlock: true });
   send({ type: "turn-end" });
   await coordinator.idle();

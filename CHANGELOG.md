@@ -4,7 +4,7 @@
 
 The processing-eye OnIt reaction now marks only messages explicitly addressed to the bot: private chats (DM / p2p) and group messages that @ the bot. Replies inside a topic the bot started no longer get the reaction without an @, so OnIt appears exactly where a streaming card can open. Larkin no longer records bot topic roots; a leftover `bot_topic_roots` key in existing state is ignored.
 
-Streaming-card tool steps show each tool call's raw input instead of a tool label such as 执行命令, in private chats and groups alike: commands and search queries as written, structured arguments as JSON, file changes as paths; a call without input still shows its tool name. Inputs are not redacted. Each input is flattened to one line, and one longer than 200 characters keeps its head and tail with `…` in the middle.
+Streaming-card tool steps show each tool call's raw input instead of a tool label such as 执行命令, in private chats and groups alike: commands and search queries as written, structured arguments as JSON, file changes as paths; a call without input still shows its tool name. Inputs are not redacted. Each input is flattened to one line, and one longer than 200 characters keeps its head and tail with `…` in the middle. Steps no longer carry a status word; only a failed call is marked `· failed`. The card is now English throughout: Thinking…, Replying…, Running …, Replay · N tool calls · Ns, and the failure and nothing-to-reply notices, which also reach the plain-text fallback.
 
 ## 0.5.19
 
