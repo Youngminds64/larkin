@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.22
+
+The Host no longer replies "我还在处理中，完成后会汇总更新。" as the bot when a turn runs past two minutes without an outbound message. Long turns keep only the OnIt reaction; any progress update comes from the Agent. The `last_outbound_at` / `last_outbound_by_target` fields that only suppressed that reply are no longer written; leftover values in existing state are ignored.
+
 ## 0.5.19
 
 The Feishu processing-eye OnIt reaction is no longer a config switch. After a successful deliver, Larkin reacts OnIt only for private chats (DM / p2p), when the inbound event already marked the bot as mentioned, or when the user is talking inside a topic the bot started (a Feishu topic whose root is a bot-owned message). Ordinary group messages without @ and outside a bot-started topic never get the reaction, including free-mention chats that still wake the Agent.
