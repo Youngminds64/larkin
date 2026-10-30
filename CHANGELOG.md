@@ -6,6 +6,8 @@ The processing-eye OnIt reaction now marks only messages explicitly addressed to
 
 Streaming-card tool steps show each tool call's raw input instead of a tool label such as 执行命令, in private chats and groups alike: commands and search queries as written, structured arguments as JSON, file changes as paths; a call without input still shows its tool name. Inputs are not redacted. Each input is flattened to one line, and one longer than 200 characters keeps its head and tail with `…` in the middle. Steps no longer carry a status word; only a failed call is marked `· failed`. The card is now English throughout: Thinking…, Replying…, Running …, Replay · N tool calls · Ns, and the failure and nothing-to-reply notices, which also reach the plain-text fallback.
 
+The Host no longer replies "我还在处理中，完成后会汇总更新。" as the bot when a turn runs past two minutes without an outbound message. Long turns keep only the OnIt reaction; any progress update comes from the Agent. The `last_outbound_at` / `last_outbound_by_target` fields that only suppressed that reply are no longer written; leftover values in existing state are ignored.
+
 ## 0.5.19
 
 The Feishu processing-eye OnIt reaction is no longer a config switch. After a successful deliver, Larkin reacts OnIt only for private chats (DM / p2p), when the inbound event already marked the bot as mentioned, or when the user is talking inside a topic the bot started (a Feishu topic whose root is a bot-owned message). Ordinary group messages without @ and outside a bot-started topic never get the reaction, including free-mention chats that still wake the Agent.
