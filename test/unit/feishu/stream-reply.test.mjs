@@ -139,10 +139,25 @@ test("after the poll the card streams the answer, folds the steps into a replay 
   assert.equal(card.inThread, false);
   assert.equal(answerOf(card), "你好，世界\n\n查完了。");
   assert.match(replayTitleOf(card), /过程回放 · 执行了 1 个工具调用 · 用时 1 秒/);
-  assert.equal(replayStepsOf(card), "- 执行命令 · 失败", "a step shows the tool name and status, never its arguments");
-  assert.doesNotMatch(JSON.stringify(card.json), /ls docs/);
+  assert.equal(replayStepsOf(card), "- `ls docs` · 失败", "a step shows the raw input and status, not the tool name");
   assert.deepEqual(card.settings, { config: { streaming_mode: false, summary: { content: "你好，世界 查完了。" } } });
   assert.deepEqual(card.sequences, [...card.sequences].sort((a, b) => a - b), "CardKit sequences only increase");
+});
+
+test("a long tool input keeps its head and tail on one line and elides the middle", async () => {
+  const { cards, state, coordinator, send } = harness();
+  send({ type: "turn-start" });
+  poll(send, state, { deliveryTarget: "chat:oc_room", deliveryAnchor: "om_user" });
+  const command = `bash -lc "cd /srv/app &&\n${"x".repeat(400)} && echo \`done\`" TAIL_END`;
+  send({ type: "activity", activity: "tool", name: "执行命令", text: command, toolId: "long" });
+  send({ type: "activity", activity: "tool", name: "执行命令", toolId: "bare" });
+  send({ type: "turn-end" });
+  await coordinator.idle();
+  const [first, second] = replayStepsOf(cards[0]).split("\n");
+  const shown = /^- `(.*)` · 完成$/.exec(first)[1];
+  assert.equal(shown.length, 200, "the shown input is bounded");
+  assert.match(shown, /^bash -lc "cd \/srv\/app && x+…x+ && echo 'done'" TAIL_END$/, "head and tail survive; newlines and backticks are flattened");
+  assert.equal(second, "- 执行命令 · 完成", "a call without input falls back to the tool name");
 });
 
 test("while streaming, text grows through element updates and a new step restructures the card", async () => {
@@ -158,12 +173,12 @@ test("while streaming, text grows through element updates and a new step restruc
   send({ type: "activity", activity: "tool", name: "网页搜索", text: "飞书 卡片", toolId: "s1" });
   await tick();
   assert.match(findElement(cards[0].json, "p1").header.title.content, /执行了 1 个工具调用/);
-  assert.match(findElement(cards[0].json, "status").content, /正在执行：网页搜索/);
+  assert.match(findElement(cards[0].json, "status").content, /正在执行：`飞书 卡片`/);
   assert.ok(calls.includes("update"), "a new steps panel is a full card update");
   send({ type: "turn-end" });
   await coordinator.idle();
   assert.equal(answerOf(cards[0]), "第一段继续");
-  assert.match(replayStepsOf(cards[0]), /网页搜索 · 完成/, "a call without a reported result is complete when the turn ends");
+  assert.match(replayStepsOf(cards[0]), /`飞书 卡片` · 完成/, "a call without a reported result is complete when the turn ends");
 });
 
 test("reasoning after the poll waits for the answer and then shows in the steps", async () => {

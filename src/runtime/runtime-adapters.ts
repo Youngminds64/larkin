@@ -187,15 +187,24 @@ function parseJson(line: string): Record<string, any> | null {
   } catch { return null; }
 }
 
-/** Display name of a Codex app-server tool item; null for messages and reasoning. Arguments are never shown. */
-function codexToolName(item: Record<string, any> | undefined): string | null {
+/** A tool call's raw input as one string for the streaming card: strings as-is, anything else as JSON. */
+function toolInputText(input: unknown): string {
+  if (input === undefined || input === null) return "";
+  if (typeof input === "string") return input;
+  if (Array.isArray(input) && input.every((part) => typeof part === "string")) return input.join(" ");
+  try { return JSON.stringify(input) ?? ""; } catch { return ""; }
+}
+
+/** Display name and raw input of a Codex app-server tool item; null for messages and reasoning. */
+function codexToolDisplay(item: Record<string, any> | undefined): { name: string; input: string } | null {
   if (!item || typeof item.type !== "string") return null;
   switch (item.type) {
-    case "commandExecution": return "执行命令";
-    case "mcpToolCall": return [item.server, item.tool].filter(Boolean).join("/") || "MCP 工具";
-    case "fileChange": return "修改文件";
-    case "webSearch": return "网页搜索";
-    case "dynamicToolCall": return String(item.tool || "工具");
+    case "commandExecution": return { name: "执行命令", input: toolInputText(item.command) };
+    case "mcpToolCall": return { name: [item.server, item.tool].filter(Boolean).join("/") || "MCP 工具", input: toolInputText(item.arguments) };
+    case "fileChange": return { name: "修改文件", input: Array.isArray(item.changes)
+      ? item.changes.map((change: { path?: unknown }) => String(change?.path ?? "")).filter(Boolean).join(", ") : "" };
+    case "webSearch": return { name: "网页搜索", input: toolInputText(item.query) };
+    case "dynamicToolCall": return { name: String(item.tool || "工具"), input: toolInputText(item.arguments) };
     default: return null;
   }
 }
@@ -389,10 +398,11 @@ class CodexSession extends EventSession {
       this.emit({ type: "turn-end", ...(this.threadId ? { sessionId: this.threadId } : {}), ...(turnId ? { turnId } : {}) });
     } else if (message.method === "item/started" && message.params?.item?.type === "agentMessage") {
       this.textBlockPending = true;
-    } else if (message.method === "item/started" && codexToolName(message.params?.item)) {
-      this.emit({ type: "activity", activity: "tool", name: codexToolName(message.params.item)!,
+    } else if (message.method === "item/started" && codexToolDisplay(message.params?.item)) {
+      const tool = codexToolDisplay(message.params.item)!;
+      this.emit({ type: "activity", activity: "tool", name: tool.name, ...(tool.input ? { text: tool.input } : {}),
         ...(message.params.item.id ? { toolId: String(message.params.item.id) } : {}) });
-    } else if (message.method === "item/completed" && codexToolName(message.params?.item)) {
+    } else if (message.method === "item/completed" && codexToolDisplay(message.params?.item)) {
       const item = message.params.item;
       const status = String(item.status || "completed").toLowerCase();
       const ok = status !== "failed" && status !== "declined" && (item.exitCode === undefined || item.exitCode === null || item.exitCode === 0);
@@ -568,7 +578,9 @@ class ClaudeSession extends EventSession {
         if (block.type === "text" && block.text) this.emit({ type: "activity", activity: "text", text: String(block.text) });
         if (block.type === "thinking" && block.thinking) this.emit({ type: "activity", activity: "thinking", text: String(block.thinking) });
         if (block.type === "tool_use") {
-          this.emit({ type: "activity", activity: "tool", name: String(block.name || "tool"), ...(block.id ? { toolId: String(block.id) } : {}) });
+          const input = toolInputText(block.input);
+          this.emit({ type: "activity", activity: "tool", name: String(block.name || "tool"), ...(input ? { text: input } : {}),
+            ...(block.id ? { toolId: String(block.id) } : {}) });
         }
       }
       const next = this.gated.shift();
@@ -823,7 +835,8 @@ class PiSession extends EventSession {
         this.toolCallOpen = true;
         this.emit({ type: "runtime-observation", runtime: "pi", distribution: this.distribution, phase: "tool_call" });
       }
-      this.emit({ type: "activity", activity: "tool", name: String(event.toolName || "tool"),
+      const input = toolInputText(event.args);
+      this.emit({ type: "activity", activity: "tool", name: String(event.toolName || "tool"), ...(input ? { text: input } : {}),
         ...(event.toolCallId ? { toolId: String(event.toolCallId) } : {}) });
     }
     else if (event?.type === "tool_execution_end") {

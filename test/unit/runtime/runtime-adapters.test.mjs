@@ -1749,7 +1749,8 @@ test("Codex, Claude and Pi emit ordered text-delta events with block boundaries 
   codex.child.stdout.write(`${JSON.stringify({ method: "item/started", params: { item: { type: "commandExecution", id: "c1", command: "curl -H 'Authorization: Bearer s3cr3t' x" } } })}\n`);
   await new Promise((resolve) => setImmediate(resolve));
   const toolEvent = codex.events.findLast((event) => event.type === "activity" && event.activity === "tool");
-  assert.deepEqual(toolEvent, { type: "activity", activity: "tool", name: "执行命令", toolId: "c1" }, "tool activity carries no arguments");
+  assert.deepEqual(toolEvent, { type: "activity", activity: "tool", name: "执行命令",
+    text: "curl -H 'Authorization: Bearer s3cr3t' x", toolId: "c1" }, "tool activity carries the raw command");
 
   const child = new FakeProcess();
   const claude = await createNativeRuntimeAdapter("claude", {
@@ -1764,12 +1765,16 @@ test("Codex, Claude and Pi emit ordered text-delta events with block boundaries 
     { type: "stream_event", event: { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } } },
     { type: "stream_event", event: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "An" } } },
     { type: "stream_event", event: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "swer" } } },
-    { type: "assistant", session_id: "claude-delta", message: { content: [{ type: "text", text: "Answer" }] } },
+    { type: "assistant", session_id: "claude-delta", message: { content: [{ type: "text", text: "Answer" },
+      { type: "tool_use", id: "tu1", name: "Bash", input: { command: "git status", description: "Show status" } }] } },
     { type: "result", session_id: "claude-delta", is_error: false },
   ]) child.stdout.write(`${JSON.stringify(message)}\n`);
   await new Promise((resolve) => setImmediate(resolve));
   // The complete assistant message keeps feeding activity, but never duplicates the streamed text.
   assert.deepEqual(textDeltas(claudeEvents), ["|An", "swer"]);
+  assert.deepEqual(claudeEvents.find((event) => event.type === "activity" && event.activity === "tool"), {
+    type: "activity", activity: "tool", name: "Bash", text: '{"command":"git status","description":"Show status"}', toolId: "tu1",
+  }, "a structured tool input is shown as its raw JSON");
 
   let listener;
   const sdk = {
@@ -1790,4 +1795,8 @@ test("Codex, Claude and Pi emit ordered text-delta events with block boundaries 
   listener({ type: "message_update", assistantMessageEvent: { type: "toolcall_delta", delta: "{\"cmd\"" } });
   listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: " there" } });
   assert.deepEqual(textDeltas(piEvents), ["|Hi", " there"]);
+  listener({ type: "tool_execution_start", toolName: "bash", toolCallId: "pt1", args: { command: "ls -la" } });
+  assert.deepEqual(piEvents.findLast((event) => event.type === "activity" && event.activity === "tool"), {
+    type: "activity", activity: "tool", name: "bash", text: '{"command":"ls -la"}', toolId: "pt1",
+  });
 });

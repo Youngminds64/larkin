@@ -4,6 +4,8 @@
 
 The processing-eye OnIt reaction now marks only messages explicitly addressed to the bot: private chats (DM / p2p) and group messages that @ the bot. Replies inside a topic the bot started no longer get the reaction without an @, so OnIt appears exactly where a streaming card can open. Larkin no longer records bot topic roots; a leftover `bot_topic_roots` key in existing state is ignored.
 
+Streaming-card tool steps show each tool call's raw input instead of a tool label such as 执行命令, in private chats and groups alike: commands and search queries as written, structured arguments as JSON, file changes as paths; a call without input still shows its tool name. Inputs are not redacted. Each input is flattened to one line, and one longer than 200 characters keeps its head and tail with `…` in the middle.
+
 ## 0.5.19
 
 The Feishu processing-eye OnIt reaction is no longer a config switch. After a successful deliver, Larkin reacts OnIt only for private chats (DM / p2p), when the inbound event already marked the bot as mentioned, or when the user is talking inside a topic the bot started (a Feishu topic whose root is a bot-owned message). Ordinary group messages without @ and outside a bot-started topic never get the reaction, including free-mention chats that still wake the Agent.

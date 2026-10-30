@@ -14,7 +14,9 @@
 // the user without a reply. When the card could not be created, so certainly
 // nothing reached the chat, the Host replies with a plain text message instead.
 //
-// Tool steps show only the tool name and its status, never its arguments.
+// A tool step shows the call's raw input, unredacted and on one line, with its status; only a
+// call without input falls back to the tool name. A long input keeps its head and tail and
+// elides the middle.
 //
 // The model's current reply anchor is the canonical Inbox `last_source`, which a
 // successful scoped poll sets and the Runtime turn boundary clears. A poll is a
@@ -63,6 +65,7 @@ export const STREAM_REPLY_FAILURE_TEXT = "处理这条消息时出错了，没�
 export const STREAM_REPLY_SILENT_TEXT = "已处理完成，没有需要回复的内容。";
 
 const MAX_THINKING_CHARS = 600;
+const MAX_TOOL_INPUT_CHARS = 200;
 const MAX_STEP_LINES = 60;
 const SUMMARY_CHARS = 50;
 
@@ -80,10 +83,23 @@ export function replyAddressOf(source: StreamReplySource | null): ReplyAddress |
 
 type Step =
   | { kind: "thinking"; text: string }
-  | { kind: "tool"; key: string; name: string; status: "running" | "completed" | "failed" };
+  | { kind: "tool"; key: string; name: string; input: string; status: "running" | "completed" | "failed" };
 type Entry = { kind: "text"; text: string } | { kind: "steps"; steps: Step[] };
 
 const STATUS_LABEL = { running: "执行中", completed: "完成", failed: "失败" } as const;
+
+/** One line of a tool input; past the limit the middle is replaced by an ellipsis. */
+function toolInputForCard(input: string): string {
+  const line = input.replace(/\s+/g, " ").trim();
+  if (line.length <= MAX_TOOL_INPUT_CHARS) return line;
+  const tail = Math.floor((MAX_TOOL_INPUT_CHARS - 1) / 3);
+  return `${line.slice(0, MAX_TOOL_INPUT_CHARS - 1 - tail)}…${line.slice(-tail)}`;
+}
+
+/** What a tool step shows: its raw input as inline code, or the tool name when it has none. */
+function toolLabel(step: { name: string; input: string }): string {
+  return step.input ? `\`${step.input.replace(/`/g, "'")}\`` : step.name;
+}
 
 function stepLines(steps: readonly Step[]): string[] {
   const lines = steps.map((step) => {
@@ -91,7 +107,7 @@ function stepLines(steps: readonly Step[]): string[] {
       const text = step.text.replace(/\s+/g, " ").trim();
       return `> ${text.length > MAX_THINKING_CHARS ? `${text.slice(0, MAX_THINKING_CHARS - 1)}…` : text}`;
     }
-    return `- ${step.name} · ${STATUS_LABEL[step.status]}`;
+    return `- ${toolLabel(step)} · ${STATUS_LABEL[step.status]}`;
   });
   return lines.length > MAX_STEP_LINES ? [`…（省略前 ${lines.length - MAX_STEP_LINES} 步）`, ...lines.slice(-MAX_STEP_LINES)] : lines;
 }
@@ -211,11 +227,12 @@ class CardReply {
     this.schedule();
   }
 
-  toolStarted(name: string, toolId?: string): void {
+  toolStarted(name: string, input: string, toolId?: string): void {
     if (this.finished) return;
     this.toolSerial += 1;
-    this.stepsEntry().push({ kind: "tool", key: toolId || `#${this.toolSerial}`, name, status: "running" });
-    this.status = `正在执行：${name}`;
+    const step: Extract<Step, { kind: "tool" }> = { kind: "tool", key: toolId || `#${this.toolSerial}`, name, input: toolInputForCard(input), status: "running" };
+    this.stepsEntry().push(step);
+    this.status = `正在执行：${toolLabel(step)}`;
     this.schedule();
   }
 
@@ -438,7 +455,7 @@ export class StreamReplyCoordinator {
       turn.tools += 1;
       // Resolve before this call runs: a poll's own source only exists after it returns.
       const card = this.cardFor(agentId, turn, true);
-      card?.toolStarted(event.name || "工具", event.toolId);
+      card?.toolStarted(event.name || "工具", event.text || "", event.toolId);
       turn.needsResolve = true;
       return;
     }
