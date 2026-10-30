@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.24
+
+Changing a Codex Agent's model, reasoning effort, or Fast mode no longer restarts the Runtime or reconnects Feishu. The new settings apply from the next turn of the same thread, including while a turn is running. Clearing a setting back to the Codex default, or any other config change, still replaces the session. When a replacement does start a new Codex process, it now waits for the old process to release the thread before resuming instead of failing with an active-writer error, and startup errors emitted before the Host subscribes are delivered instead of dropped, so the Agent no longer silently stops accepting messages.
+
 ## 0.5.23
 
 The Host no longer replies "我还在处理中，完成后会汇总更新。" as the bot when a turn runs past two minutes without an outbound message. Long turns keep only the OnIt reaction; any progress update comes from the Agent. The `last_outbound_at` / `last_outbound_by_target` fields that only suppressed that reply are no longer written; leftover values in existing state are ignored.
