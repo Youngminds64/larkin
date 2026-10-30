@@ -1255,6 +1255,13 @@ export function createHostShell({
       const previous = index >= 0 ? agents[index] : null;
       const unchanged = previous && agentConfigSignature(previous) === agentConfigSignature(candidate);
       if (unchanged && activeChannels.has(candidate.agentId)) return "unchanged";
+      const settingsOnly = previous && activeChannels.has(candidate.agentId) && agentConfigSignature(
+        { ...previous, model: candidate.model, effort: candidate.effort, fastMode: candidate.fastMode }) === agentConfigSignature(candidate);
+      if (settingsOnly && runtimeHost.updateSettings?.(candidate)) {
+        Object.assign(previous, { model: candidate.model, effort: candidate.effort, fastMode: candidate.fastMode });
+        log(`Runtime 设置下一轮生效 agent=${candidate.name} model=${candidate.model} effort=${candidate.effort ?? "default"} fast=${candidate.fastMode === true}`);
+        return "updated";
+      }
 
       // Runtime replacement is target-only. The old channel remains connected until the
       // candidate Runtime and channel are both ready, so unrelated Agents are untouched.

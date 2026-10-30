@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.22
+
+Changing a Codex Agent's model, reasoning effort, or Fast mode no longer restarts the Runtime or reconnects Feishu. The new settings apply from the next turn of the same thread, including while a turn is running. Clearing a setting back to the Codex default, or any other config change, still replaces the session. When a replacement does start a new Codex process, it now waits for the old process to release the thread before resuming instead of failing with an active-writer error, and startup errors emitted before the Host subscribes are delivered instead of dropped, so the Agent no longer silently stops accepting messages.
+
 ## 0.5.19
 
 The Feishu processing-eye OnIt reaction is no longer a config switch. After a successful deliver, Larkin reacts OnIt only for private chats (DM / p2p), when the inbound event already marked the bot as mentioned, or when the user is talking inside a topic the bot started (a Feishu topic whose root is a bot-owned message). Ordinary group messages without @ and outside a bot-started topic never get the reaction, including free-mention chats that still wake the Agent.
