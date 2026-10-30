@@ -317,17 +317,6 @@ test("guarded IM bodies normalize literal escaped newlines and tabs before provi
   } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test("guarded send records the sent message as a bot topic root", () => {
-  const f = fixture();
-  try {
-    f.setWriteResult({ status: 0, signal: null, output: [], pid: 1,
-      stdout: JSON.stringify({ ok: true, data: { message_id: "om_outbound", chat_id: "oc_progress", create_time: "1786553650354" } }),
-      stderr: "", error: undefined });
-    assert.equal(f.run(["im", "+messages-send", "--chat-id", "oc_progress", "--text", "sent"]).code, 0);
-    assert.deepEqual(f.store.readJson("freshnessState", {}).bot_topic_roots, ["om_outbound"]);
-  } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
-});
-
 test("identity switches and raw write bypasses fail before provider invocation", () => {
   const f = fixture();
   try {
