@@ -88,6 +88,7 @@ export interface InboxPollResult<T> {
   consumedDeliveryIds: string[];
   seenThroughSeq: number | null;
   pendingCount: number;
+  polledThisTurn?: string[];
 }
 
 interface InboxTargetState {
@@ -147,6 +148,7 @@ interface InboxStateFile {
   /** Pinned reminder anchors survive the bounded messages index. */
   delivery_anchors?: Record<string, { target: string }>;
   last_source?: InboxSourceState;
+  turn_polled?: Array<{ target: string; message_id: string }>;
   /** Consumed reminder contexts for the guarded outbound hook; not an IM ledger. */
   reminder_contexts?: InboxReminderState[];
   /** Legacy single-slot reminder context, accepted only during migration. */
@@ -234,6 +236,7 @@ function normalizeInboxState(value: unknown): InboxStateFile {
         ...(row.reply_by === "command" ? { reply_by: "command" as const } : {}) };
     }
   }
+  if (Array.isArray(raw.turn_polled)) state.turn_polled = raw.turn_polled;
   if (raw.drafts && typeof raw.drafts === "object" && !Array.isArray(raw.drafts)) {
     for (const [draftId, candidate] of Object.entries(raw.drafts)) {
       if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
@@ -846,6 +849,56 @@ export class AgentStateStore {
   }
 
   /**
+   * Prove that exactly these messages reached the Agent, from one locked canonical
+   * Inbox/ledger snapshot. Unrelated historical rows and ledger entries are not
+   * evidence about them, so a long Inbox backlog or a retained consumed row cannot
+   * veto the answer. Each required message must be absent from the canonical Inbox,
+   * recorded as consumed in the Runtime ledger, and, while it is still in the
+   * bounded message index, covered by its target's model-seen watermark. Anything
+   * malformed or still pending fails closed.
+   */
+  provenConsumedInboundDeliveries(requiredMessageIds: readonly string[]): boolean {
+    const required = requiredMessageIds.filter((id): id is string => typeof id === "string" && Boolean(id));
+    if (!required.length || required.length !== requiredMessageIds.length) return false;
+    if (new Set(required).size !== required.length) return false;
+    return this.withInboxLock(this.file("inbox"), () => {
+      let rows: InboxEnvelope[];
+      try { rows = this.readNdjson<InboxEnvelope>("inbox"); }
+      catch { return false; }
+      const pendingIds = new Set<string>();
+      for (const row of rows) {
+        if (!row || typeof row !== "object" || typeof row.message_id !== "string" || !row.message_id) return false;
+        try { targetKeyOfInboxEnvelope(row); } catch { return false; }
+        if (pendingIds.has(row.message_id)) return false;
+        pendingIds.add(row.message_id);
+      }
+      const state = this.readJson<InboxStateFile | null>("inboxState", null);
+      if (!state || state.version !== 2 || !state.targets || typeof state.targets !== "object" || Array.isArray(state.targets)
+        || !state.messages || typeof state.messages !== "object" || Array.isArray(state.messages)) return false;
+      const ledger = this.readJson<RuntimeDeliveryStore>("runtimeDeliveries", { version: 1, records: [] });
+      if (!Array.isArray(ledger.records)) return false;
+      const records = ledger.records.filter((record): record is RuntimeDeliveryRecord => Boolean(record)
+        && typeof record === "object" && !Array.isArray(record));
+      return required.every((messageId) => {
+        // A row still queued for the Agent is never consumption, whatever the ledger says.
+        if (pendingIds.has(messageId)) return false;
+        const matching = records.filter((record) => record.messageId === messageId);
+        if (matching.length !== 1) return false;
+        const record = matching[0]!;
+        if (record.status !== "consumed") return false;
+        const known = state.messages[messageId];
+        // The bounded message index may have pruned an older consumed entry; the
+        // drained row plus the consumed ledger record is then the whole evidence.
+        if (!known) return true;
+        if (!isCanonicalInboxTarget(known.target) || !validSequence(known.seq)) return false;
+        if (typeof record.target === "string" && record.target && record.target !== known.target) return false;
+        const target = state.targets[known.target];
+        return Boolean(target && Number.isSafeInteger(target.model_seen_seq) && target.model_seen_seq >= known.seq);
+      });
+    });
+  }
+
+  /**
    * Re-arm only the durable deliveries proven to be the context-window incident.
    * The Inbox bytes are intentionally untouched. An optional synchronous commit
    * hook lets RuntimeHost swap its in-memory generation while this same lock is
@@ -1064,7 +1117,10 @@ export class AgentStateStore {
         const rowTarget = targetKeyOfInboxEnvelope(row);
         return count + (rowTarget === options.target ? 1 : 0);
       }, 0);
-      if (!envelopes.length) return { envelopes, consumedDeliveryIds: [], seenThroughSeq: null, pendingCount };
+      if (!envelopes.length) {
+        const polledThisTurn = (state.turn_polled ?? []).filter((row) => !options.target || options.target === row.target).map((row) => row.message_id);
+        return { envelopes, consumedDeliveryIds: [], seenThroughSeq: null, pendingCount, ...(polledThisTurn.length ? { polledThisTurn } : {}) };
+      }
       const messageIds = new Set(envelopes.flatMap((row) => {
         if (!row || typeof row !== "object") return [];
         const messageId = (row as Record<string, unknown>).message_id;
@@ -1125,6 +1181,8 @@ export class AgentStateStore {
           && isUserDeliveryTarget(targetKeyOfInboxEnvelope(envelope)));
         state.last_source = { ...userSources.at(-1)!, ...(addressed ? {} : { reply_by: "command" as const }) };
       } else delete state.last_source;
+      const polledIds = userSources.filter((source) => source.message_id.startsWith("om_")).map(({ target, message_id }) => ({ target, message_id }));
+      if (polledIds.length) state.turn_polled = [...(state.turn_polled ?? []), ...polledIds];
       this.replaceInboxUnlocked(remaining);
       this.writeJson("inboxState", state);
       return { envelopes, consumedDeliveryIds, seenThroughSeq, pendingCount };
@@ -1194,8 +1252,9 @@ export class AgentStateStore {
   clearCurrentInboxSource(): void {
     this.withInboxLock(this.file("inbox"), () => {
       const state = this.inboxState();
-      if (!state.last_source) return;
+      if (!state.last_source && !state.turn_polled) return;
       delete state.last_source;
+      delete state.turn_polled;
       this.writeJson("inboxState", state);
     });
   }

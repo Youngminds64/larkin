@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.25
+
+Polling an Inbox scope that has nothing new, after the same Runtime turn already polled messages there, now lists those message ids in `polled_this_turn` with a `next_action` naming the `larkin im +messages-mget` command that reads them again. A Runtime that compacts its context right after a poll (Codex) can therefore recover the message it owes a reply to, instead of polling an empty target until the process restarts while the reply card shows only poll steps. Poll stays at-most-once: no body is returned twice. The list covers user messages only and ends at the turn boundary together with the in-turn reply source.
+
+## 0.5.24
+
+Codex child-thread notifications no longer replace the root session, leak child output into its replies, or end the active root turn. Late completions, steer failures, and configuration errors from an older turn preserve the newer turn.
+
 ## 0.5.23
 
 The standing prompt (`larkin-standing-v35`, card mode `larkin-standing-v42-card`) now requires a reply's `message_id` to be copied verbatim from the message being answered. A reply or other guarded write whose `--message-id` is not in this Agent's Inbox records now fails with a plain statement of that fact. Reminder envelopes drop the chat-send fallback for an unresolvable anchor and the legacy-anchor notes, and say once that people named in a reminder title are its content, not its recipients.
